@@ -150,35 +150,84 @@ PORT=3001
 
 ### Quick Deploy to Railway
 
-1. **Install Railway CLI**
-   ```bash
-   npm i -g @railway/cli
-   railway login
+**Note**: This project is configured for Railway-first deployment. You can deploy directly to Railway without local setup.
+
+1. **Create Railway Account**
+   - Go to [railway.app](https://railway.app)
+   - Sign up with GitHub (recommended)
+   - Create a new project
+
+2. **Add Services to Railway**
+   
+   **PostgreSQL Database:**
+   - Click "New" → "Database" → "Add PostgreSQL"
+   - Railway automatically creates `DATABASE_URL`
+   
+   **Redis Cache:**
+   - Click "New" → "Database" → "Add Redis"
+   - Railway automatically creates `REDIS_URL`
+   
+   **Web App Service:**
+   - Click "New" → "GitHub Repo"
+   - Select your `p2p4everything` repository
+   - Railway auto-detects Next.js
+   - Set root directory to `.` (root)
+   - Build command: `npm run build`
+   - Start command: `npm start`
+   
+   **Signaling Server Service:**
+   - Click "New" → "GitHub Repo"
+   - Select your `p2p4everything` repository again
+   - Set root directory to `services/signaling`
+   - Build command: `npm run build`
+   - Start command: `npm start`
+
+3. **Set Up Clerk**
+   - Create account at [clerk.com](https://clerk.com)
+   - Create a new application
+   - Get your API keys (Publishable Key and Secret Key)
+   - Set up webhook: `https://your-app.railway.app/api/webhooks/clerk`
+
+4. **Configure Environment Variables**
+   
+   For **Web App Service**:
+   ```env
+   NODE_ENV=production
+   PORT=3000
+   NEXT_PUBLIC_APP_URL=https://your-app.railway.app
+   DATABASE_URL=${{Postgres.DATABASE_URL}}
+   REDIS_URL=${{Redis.REDIS_URL}}
+   CLERK_PUBLISHABLE_KEY=pk_live_...
+   CLERK_SECRET_KEY=sk_live_...
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+   CLERK_WEBHOOK_SECRET=whsec_...
+   NEXT_PUBLIC_SIGNALING_SERVER_URL=wss://your-signaling.railway.app
+   ENCRYPTION_KEY=your-32-char-key
+   JWT_SECRET=your-jwt-secret
+   ```
+   
+   For **Signaling Server Service**:
+   ```env
+   NODE_ENV=production
+   PORT=3001
+   DATABASE_URL=${{Postgres.DATABASE_URL}}
+   REDIS_URL=${{Redis.REDIS_URL}}
+   JWT_SECRET=your-jwt-secret
    ```
 
-2. **Create Railway Project**
+5. **Run Database Migrations**
+   - Go to Web App service → Deployments
+   - Open a shell or use Railway CLI:
    ```bash
-   railway init
-   railway link
+   railway run --service web-app npx prisma migrate deploy
    ```
 
-3. **Add Services**
-   - Add PostgreSQL database
-   - Add Redis cache
-   - Deploy web app service
-   - Deploy signaling server service
+6. **Deploy**
+   - Railway automatically deploys on every push to main branch
+   - Or deploy manually via Railway dashboard
+   - Or use Railway CLI: `railway up`
 
-4. **Set Environment Variables**
-   - Use Railway dashboard or CLI
-   - Reference database URLs: `${{Postgres.DATABASE_URL}}`
-   - Add Clerk keys and other secrets
-
-5. **Deploy**
-   ```bash
-   railway up
-   ```
-
-See [Deployment Guide](./DEPLOYMENT.md) for detailed Railway setup instructions.
+See [RAILWAY_SETUP.md](./RAILWAY_SETUP.md) for detailed Railway setup instructions.
 
 ## Next Steps
 
