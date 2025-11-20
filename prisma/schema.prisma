@@ -1,0 +1,104 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  clerkUserId  String    @unique
+  email        String?
+  username     String?   @unique
+  phone        String?
+  displayName  String?
+  avatarUrl    String?
+  bio          String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  devices      Device[]
+  connectionsA Connection[] @relation("UserA")
+  connectionsB Connection[] @relation("UserB")
+  fileAds      FileAdvertisement[]
+  sentMessages MessageMetadata[] @relation("Sender")
+  receivedMessages MessageMetadata[] @relation("Receiver")
+
+  @@index([clerkUserId])
+  @@index([email])
+  @@index([username])
+  @@index([phone])
+}
+
+model Device {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName  String
+  deviceType  String   // web, mobile, desktop
+  publicKey   String   @db.Text // E2E encryption public key
+  lastSeen    DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  fileAds     FileAdvertisement[]
+
+  @@index([userId])
+  @@index([lastSeen])
+}
+
+model Connection {
+  id        String   @id @default(uuid())
+  userAId   String
+  userBId   String
+  userA     User     @relation("UserA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB     User     @relation("UserB", fields: [userBId], references: [id], onDelete: Cascade)
+  status    String   @default("pending") // pending, accepted, blocked
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userAId, userBId])
+  @@index([userAId])
+  @@index([userBId])
+  @@index([status])
+}
+
+model FileAdvertisement {
+  id        String   @id @default(uuid())
+  userId    String
+  deviceId  String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  fileName  String
+  fileHash  String   // SHA-256 for deduplication
+  fileSize  BigInt
+  mimeType  String?
+  metadata  Json?    // Encrypted metadata
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([fileHash])
+  @@index([expiresAt])
+}
+
+model MessageMetadata {
+  id                  String   @id @default(uuid())
+  senderId            String
+  receiverId          String
+  sender              User     @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver            User     @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  messageType         String   // text, file, call
+  encryptedContentHash String? // Hash of encrypted content (for verification)
+  timestamp           DateTime @default(now())
+
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([timestamp])
+}
+
