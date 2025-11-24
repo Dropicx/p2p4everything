@@ -191,7 +191,10 @@ export async function POST(request: Request) {
     // Send WebSocket notification to recipient if message was queued
     if (hasEncryptedContent) {
       try {
-        const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:3001'
+        // Convert WebSocket URL to HTTP URL for the /notify endpoint
+        let signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:3001'
+        // Replace wss:// with https:// and ws:// with http://
+        signalingServerUrl = signalingServerUrl.replace('wss://', 'https://').replace('ws://', 'http://')
         const notifyUrl = `${signalingServerUrl}/notify`
 
         console.log(`[Message API] Sending notification to ${notifyUrl} for user ${receiver.id}`)
