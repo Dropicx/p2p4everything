@@ -2,6 +2,7 @@ import { auth, currentUser } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { db } from '@/lib/db'
+import { KeyFingerprint } from '@/components/dashboard/key-fingerprint'
 
 export default async function SettingsPage() {
   const { userId } = await auth()
@@ -58,6 +59,7 @@ export default async function SettingsPage() {
 
         <Card title="Security">
           <div className="space-y-4">
+            <KeyFingerprint />
             <div>
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 Your account security is managed by Clerk. Visit your Clerk

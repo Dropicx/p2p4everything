@@ -9,6 +9,8 @@ export function Navbar() {
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard' },
+    { href: '/dashboard/messages', label: 'Messages' },
+    { href: '/dashboard/connections', label: 'Connections' },
     { href: '/dashboard/devices', label: 'Devices' },
     { href: '/dashboard/settings', label: 'Settings' },
   ]

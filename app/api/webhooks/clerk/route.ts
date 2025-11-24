@@ -96,15 +96,19 @@ export async function POST(request: Request) {
     const { id } = evt.data
 
     try {
-      await db.user.delete({
+      // Use deleteMany instead of delete to avoid errors if user doesn't exist
+      const result = await db.user.deleteMany({
         where: { clerkUserId: id },
       })
+      
+      // Log if user was not found (optional, for debugging)
+      if (result.count === 0) {
+        console.log(`User with clerkUserId ${id} not found in database, skipping deletion`)
+      }
     } catch (error) {
       console.error('Error deleting user from webhook:', error)
-      return NextResponse.json(
-        { error: 'Error deleting user' },
-        { status: 500 }
-      )
+      // Don't return error response - webhook should still succeed
+      // as the user may have already been deleted or never existed
     }
   }
 

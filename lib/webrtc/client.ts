@@ -1,0 +1,352 @@
+/**
+ * Main WebRTC client for P2P connections
+ * Integrates signaling and peer connections
+ */
+
+import { SignalingClient, type SignalingMessage } from './signaling'
+import { PeerConnection, type PeerConnectionConfig } from './peer'
+
+export interface WebRTCClientConfig {
+  signalingUrl: string
+  token?: string
+  deviceId?: string
+  iceServers?: RTCConfiguration['iceServers']
+  onMessage?: (message: string, fromUserId?: string) => void
+  onConnectionChange?: (connected: boolean) => void
+  onPeerConnectionChange?: (state: RTCPeerConnectionState) => void
+}
+
+export class WebRTCClient {
+  private signaling: SignalingClient
+  private peerConnections: Map<string, PeerConnection> = new Map()
+  private dataChannels: Map<string, RTCDataChannel> = new Map()
+  private userToConnectionId: Map<string, string> = new Map() // userId -> connectionId
+  private config: WebRTCClientConfig
+
+  constructor(config: WebRTCClientConfig) {
+    this.config = config
+    this.signaling = new SignalingClient(config.signalingUrl, (connected) => {
+      this.config.onConnectionChange?.(connected)
+    })
+
+    // Set up signaling message handlers
+    this.setupSignalingHandlers()
+
+    // Track peer connections by user ID from signaling messages
+    this.signaling.onMessage('peer-joined', (message) => {
+      if (message.type === 'peer-joined' && message.userId) {
+        this.userToConnectionId.set(message.userId, message.connectionId)
+      }
+    })
+
+    this.signaling.onMessage('room-joined', (message) => {
+      if (message.type === 'room-joined' && message.peers) {
+        message.peers.forEach((peer) => {
+          if (peer.userId && peer.connectionId) {
+            this.userToConnectionId.set(peer.userId, peer.connectionId)
+          }
+        })
+      }
+    })
+  }
+
+  /**
+   * Connect to signaling server
+   */
+  async connect(): Promise<void> {
+    await this.signaling.connect(this.config.token, this.config.deviceId)
+  }
+
+  /**
+   * Disconnect from signaling server and close all peer connections
+   */
+  disconnect(): void {
+    this.peerConnections.forEach((pc) => pc.close())
+    this.peerConnections.clear()
+    this.dataChannels.clear()
+    this.signaling.disconnect()
+  }
+
+  /**
+   * Connect to a peer (initiate connection)
+   */
+  async connectToPeer(
+    targetUserId: string,
+    targetConnectionId?: string,
+    roomId?: string
+  ): Promise<PeerConnection> {
+    const connectionKey = targetUserId
+
+    // Get connection ID if not provided
+    if (!targetConnectionId) {
+      targetConnectionId = this.userToConnectionId.get(targetUserId)
+    }
+
+    // Check if connection already exists
+    const existing = this.peerConnections.get(connectionKey)
+    if (existing) {
+      const state = existing.getConnectionState()
+      if (state === 'connected' || state === 'connecting') {
+        return existing
+      }
+      // Close stale connection
+      existing.close()
+    }
+
+    // Create peer connection
+    const peerConfig: PeerConnectionConfig = {
+      iceServers: this.config.iceServers,
+      onDataChannel: (channel) => {
+        this.setupMessageChannel(channel, targetUserId)
+      },
+      onIceCandidate: (candidate) => {
+        this.signaling.sendIceCandidate(
+          candidate.toJSON(),
+          targetConnectionId,
+          targetUserId,
+          roomId
+        )
+      },
+      onConnectionStateChange: (state) => {
+        this.config.onPeerConnectionChange?.(state)
+        if (state === 'closed' || state === 'failed') {
+          this.peerConnections.delete(connectionKey)
+        }
+      },
+    }
+
+    const peer = new PeerConnection(peerConfig)
+    this.peerConnections.set(connectionKey, peer)
+
+    // Create data channel for messages
+    const dataChannel = peer.createDataChannel('messages', {
+      ordered: true,
+    })
+    this.setupMessageChannel(dataChannel, targetUserId)
+
+    // Create offer
+    const offer = await peer.createOffer()
+    this.signaling.sendOffer(
+      JSON.stringify(offer),
+      targetConnectionId,
+      targetUserId,
+      roomId
+    )
+
+    return peer
+  }
+
+  /**
+   * Handle incoming offer (answer the connection)
+   */
+  async handleOffer(
+    offer: RTCSessionDescriptionInit,
+    fromUserId: string,
+    fromConnectionId?: string,
+    roomId?: string
+  ): Promise<void> {
+    const connectionKey = fromUserId
+
+    // Store connection ID mapping
+    if (fromConnectionId) {
+      this.userToConnectionId.set(fromUserId, fromConnectionId)
+    }
+
+    // Check if connection already exists
+    let peer = this.peerConnections.get(connectionKey)
+
+    if (!peer) {
+      // Create peer connection
+      const peerConfig: PeerConnectionConfig = {
+        iceServers: this.config.iceServers,
+        onDataChannel: (channel) => {
+          this.setupMessageChannel(channel, fromUserId)
+        },
+        onIceCandidate: (candidate) => {
+          this.signaling.sendIceCandidate(
+            candidate.toJSON(),
+            fromConnectionId,
+            fromUserId,
+            roomId
+          )
+        },
+        onConnectionStateChange: (state) => {
+          this.config.onPeerConnectionChange?.(state)
+          if (state === 'closed' || state === 'failed') {
+            this.peerConnections.delete(connectionKey)
+          }
+        },
+      }
+
+      peer = new PeerConnection(peerConfig)
+      this.peerConnections.set(connectionKey, peer)
+    }
+
+    // Set remote description
+    await peer.setRemoteDescription(offer)
+
+    // Create answer
+    const answer = await peer.createAnswer()
+    this.signaling.sendAnswer(
+      JSON.stringify(answer),
+      fromConnectionId,
+      fromUserId,
+      roomId
+    )
+  }
+
+  /**
+   * Handle incoming answer
+   */
+  async handleAnswer(
+    answer: RTCSessionDescriptionInit,
+    fromUserId: string,
+    fromConnectionId?: string
+  ): Promise<void> {
+    // Store connection ID mapping
+    if (fromConnectionId) {
+      this.userToConnectionId.set(fromUserId, fromConnectionId)
+    }
+
+    const peer = this.peerConnections.get(fromUserId)
+    if (!peer) {
+      console.warn('Received answer for unknown peer:', fromUserId)
+      return
+    }
+
+    await peer.setRemoteDescription(answer)
+  }
+
+  /**
+   * Handle incoming ICE candidate
+   */
+  async handleIceCandidate(
+    candidate: RTCIceCandidateInit,
+    fromUserId: string,
+    fromConnectionId?: string
+  ): Promise<void> {
+    // Store connection ID mapping
+    if (fromConnectionId) {
+      this.userToConnectionId.set(fromUserId, fromConnectionId)
+    }
+
+    const peer = this.peerConnections.get(fromUserId)
+    if (!peer) {
+      console.warn('Received ICE candidate for unknown peer:', fromUserId)
+      return
+    }
+
+    await peer.addIceCandidate(candidate)
+  }
+
+  /**
+   * Send a message to a peer
+   */
+  sendMessage(userId: string, message: string): boolean {
+    const channel = this.dataChannels.get(userId)
+    if (!channel || channel.readyState !== 'open') {
+      console.warn(`Data channel not open for user ${userId}`)
+      return false
+    }
+
+    try {
+      channel.send(message)
+      return true
+    } catch (error) {
+      console.error('Error sending message:', error)
+      return false
+    }
+  }
+
+  /**
+   * Join a room
+   */
+  joinRoom(roomId: string): void {
+    this.signaling.joinRoom(roomId)
+  }
+
+  /**
+   * Leave a room
+   */
+  leaveRoom(roomId: string): void {
+    this.signaling.leaveRoom(roomId)
+  }
+
+  /**
+   * Set up signaling message handlers
+   */
+  private setupSignalingHandlers(): void {
+    this.signaling.onMessage('offer', (message) => {
+      if (message.type === 'offer') {
+        const offer = JSON.parse(message.sdp) as RTCSessionDescriptionInit
+        this.handleOffer(
+          offer,
+          message.fromConnectionId || '',
+          message.fromConnectionId,
+          message.roomId
+        ).catch((error) => {
+          console.error('Error handling offer:', error)
+        })
+      }
+    })
+
+    this.signaling.onMessage('answer', (message) => {
+      if (message.type === 'answer') {
+        const answer = JSON.parse(message.sdp) as RTCSessionDescriptionInit
+        // Extract userId from message if available, otherwise use connectionId
+        const userId = (message as any).fromUserId || message.fromConnectionId || ''
+        this.handleAnswer(answer, userId, message.fromConnectionId).catch((error) => {
+          console.error('Error handling answer:', error)
+        })
+      }
+    })
+
+    this.signaling.onMessage('ice-candidate', (message) => {
+      if (message.type === 'ice-candidate') {
+        // Extract userId from message if available, otherwise use connectionId
+        const userId = (message as any).fromUserId || message.fromConnectionId || ''
+        this.handleIceCandidate(
+          message.candidate,
+          userId,
+          message.fromConnectionId
+        ).catch((error) => {
+          console.error('Error handling ICE candidate:', error)
+        })
+      }
+    })
+  }
+
+  /**
+   * Set up message data channel
+   */
+  private setupMessageChannel(
+    channel: RTCDataChannel,
+    userId: string
+  ): void {
+    this.dataChannels.set(userId, channel)
+
+    channel.onmessage = (event) => {
+      const message = event.data
+      this.config.onMessage?.(message, userId)
+    }
+
+    channel.onerror = (error) => {
+      console.error(`Data channel error for user ${userId}:`, error)
+    }
+  }
+
+  /**
+   * Get peer connection for a user
+   */
+  getPeerConnection(userId: string): PeerConnection | undefined {
+    return this.peerConnections.get(userId)
+  }
+
+  /**
+   * Check if connected to signaling server
+   */
+  isSignalingConnected(): boolean {
+    return this.signaling.isConnected()
+  }
+}
+
