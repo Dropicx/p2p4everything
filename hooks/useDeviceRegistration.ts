@@ -249,10 +249,10 @@ export function useDeviceRegistration() {
         if (!devicesResponse || !devicesResponse.ok) {
           const contentType = devicesResponse?.headers.get('content-type')
           let errorMessage = 'Failed to fetch devices'
-          
+
           if (devicesResponse?.status === 401) {
             errorMessage = 'Authentication not ready. Please wait a moment and refresh the page.'
-          } else if (contentType && contentType.includes('application/json')) {
+          } else if (devicesResponse && contentType && contentType.includes('application/json')) {
             try {
               const error = await devicesResponse.json()
               errorMessage = error.error || errorMessage
@@ -262,7 +262,7 @@ export function useDeviceRegistration() {
           } else {
             errorMessage = `Server error (${devicesResponse?.status || 'unknown'}): ${devicesResponse?.statusText || 'Unknown error'}. The API endpoint may not be available.`
           }
-          
+
           if (lastError) {
             throw lastError
           }

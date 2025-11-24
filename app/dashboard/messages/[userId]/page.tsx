@@ -474,7 +474,7 @@ export default function ChatPage() {
         setIsSending(false)
       }
     },
-    [userId, currentUserId, sendMessage, isSending]
+    [userId, currentUserId, sendMessage, isSending, client, isReady]
   )
 
   if (isLoading) {
