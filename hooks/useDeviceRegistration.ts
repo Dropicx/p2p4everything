@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import {
   generateKeyPair,
@@ -21,6 +21,7 @@ interface DeviceRegistrationState {
 
 const DEVICE_ID_KEY = 'p2p4everything-device-id'
 const DEVICE_NAME_KEY = 'p2p4everything-device-name'
+const DEVICE_REGISTERED_KEY = 'p2p4everything-device-registered'
 
 /**
  * Get or create a device ID stored in localStorage
@@ -78,13 +79,40 @@ export function useDeviceRegistration() {
     error: null,
     publicKeyFingerprint: null,
   })
+  const registrationInProgress = useRef(false)
 
   useEffect(() => {
     if (!isLoaded || !userId) {
       return
     }
 
+    // Prevent duplicate registrations
+    if (registrationInProgress.current) {
+      return
+    }
+
     async function registerDevice() {
+      // Check if already registered in this session
+      const alreadyRegistered = localStorage.getItem(DEVICE_REGISTERED_KEY)
+      if (alreadyRegistered === 'true') {
+        // Just load the existing state
+        const deviceId = getDeviceId()
+        const storedKeyPair = await getKeyPair(deviceId)
+        if (storedKeyPair) {
+          const publicKey = await importPublicKey(storedKeyPair.publicKey)
+          const fingerprint = await getKeyFingerprint(publicKey)
+          setState({
+            deviceId,
+            isRegistered: true,
+            isRegistering: false,
+            error: null,
+            publicKeyFingerprint: fingerprint,
+          })
+        }
+        return
+      }
+
+      registrationInProgress.current = true
       const deviceId = getDeviceId()
       setState((prev) => ({ ...prev, deviceId, isRegistering: true, error: null }))
 
@@ -124,13 +152,16 @@ export function useDeviceRegistration() {
         }
 
         const devices = await devicesResponse.json()
-        const existingDevice = devices.find((d: any) => d.id === deviceId)
+        const deviceName = getDeviceName()
+        const deviceType = getDeviceType()
+
+        // Check if a device with same name and type already exists for this user
+        const existingDevice = devices.find((d: any) =>
+          d.deviceName === deviceName && d.deviceType === deviceType
+        )
 
         if (!existingDevice) {
           // Register device on server
-          const deviceName = getDeviceName()
-          const deviceType = getDeviceType()
-
           const registerResponse = await fetch('/api/devices/register', {
             method: 'POST',
             headers: {
@@ -149,10 +180,13 @@ export function useDeviceRegistration() {
           }
 
           const registeredDevice = await registerResponse.json()
-          
+
           // Calculate fingerprint for display
           const publicKey = await importPublicKey(publicKeyString)
           const fingerprint = await getKeyFingerprint(publicKey)
+
+          // Mark as registered in localStorage
+          localStorage.setItem(DEVICE_REGISTERED_KEY, 'true')
 
           setState({
             deviceId: registeredDevice.id,
@@ -165,6 +199,9 @@ export function useDeviceRegistration() {
           // Device already registered, just update lastSeen
           const publicKey = await importPublicKey(publicKeyString)
           const fingerprint = await getKeyFingerprint(publicKey)
+
+          // Mark as registered in localStorage
+          localStorage.setItem(DEVICE_REGISTERED_KEY, 'true')
 
           setState({
             deviceId: existingDevice.id,
@@ -184,6 +221,8 @@ export function useDeviceRegistration() {
           isRegistering: false,
           error: error instanceof Error ? error.message : 'Unknown error',
         }))
+      } finally {
+        registrationInProgress.current = false
       }
     }
 
