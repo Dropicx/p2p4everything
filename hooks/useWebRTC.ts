@@ -12,18 +12,21 @@ export function useWebRTC() {
   const [isReady, setIsReady] = useState(false)
   const [isSignalingConnected, setIsSignalingConnected] = useState(false)
   const [connectedPeers, setConnectedPeers] = useState<Set<string>>(new Set())
+  const [client, setClient] = useState<WebRTCClient | null>(null)
   const clientRef = useRef<WebRTCClient | null>(null)
   const messageHandlersRef = useRef<Map<string, (message: string) => void>>(
     new Map()
   )
 
   useEffect(() => {
+    let mounted = true
+
     async function initClient() {
       try {
         const token = await getToken()
         const deviceId = localStorage.getItem('p2p4everything-device-id')
 
-        const client = new WebRTCClient({
+        const newClient = new WebRTCClient({
           signalingUrl: SIGNALING_URL,
           token: token || undefined,
           deviceId: deviceId || undefined,
@@ -36,8 +39,10 @@ export function useWebRTC() {
             }
           },
           onConnectionChange: (connected) => {
-            setIsSignalingConnected(connected)
-            setIsReady(connected)
+            if (mounted) {
+              setIsSignalingConnected(connected)
+              setIsReady(connected)
+            }
           },
           onPeerConnectionChange: (state) => {
             // Handle peer connection state changes
@@ -45,23 +50,36 @@ export function useWebRTC() {
           },
         })
 
-        await client.connect()
-        clientRef.current = client
-        setIsSignalingConnected(true)
-        setIsReady(true)
+        await newClient.connect()
+
+        if (mounted) {
+          clientRef.current = newClient
+          setClient(newClient)
+          setIsSignalingConnected(true)
+          setIsReady(true)
+          console.log('[useWebRTC] Client initialized and ready')
+        } else {
+          // Component unmounted during init, clean up
+          newClient.disconnect()
+        }
       } catch (error) {
         console.error('Error initializing WebRTC client:', error)
-        setIsReady(false)
+        if (mounted) {
+          setIsReady(false)
+        }
       }
     }
 
     initClient()
 
     return () => {
+      mounted = false
       if (clientRef.current) {
+        console.log('[useWebRTC] Cleaning up client')
         clientRef.current.disconnect()
         clientRef.current = null
       }
+      setClient(null)
       setIsReady(false)
       setIsSignalingConnected(false)
     }
@@ -137,7 +155,7 @@ export function useWebRTC() {
   }, [])
 
   return {
-    client: clientRef.current,
+    client, // Now returns state, not ref - triggers re-renders!
     isReady,
     isSignalingConnected,
     connectedPeers: Array.from(connectedPeers),

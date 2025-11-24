@@ -92,7 +92,7 @@ function getDeviceType(): 'web' | 'mobile' | 'desktop' {
  * Hook for automatic device registration with encryption key generation
  */
 export function useDeviceRegistration() {
-  const { userId, isLoaded } = useAuth()
+  const { userId, isLoaded, sessionId } = useAuth()
   const [state, setState] = useState<DeviceRegistrationState>({
     deviceId: null,
     isRegistered: false,
@@ -103,7 +103,9 @@ export function useDeviceRegistration() {
   const registrationInProgress = useRef(false)
 
   useEffect(() => {
-    if (!isLoaded || !userId) {
+    // Wait for Clerk to be fully loaded AND have a session
+    // sessionId ensures the auth cookie is set and ready
+    if (!isLoaded || !userId || !sessionId) {
       return
     }
 
@@ -210,22 +212,60 @@ export function useDeviceRegistration() {
         }
 
         // Check if device is already registered on server
-        const devicesResponse = await fetch('/api/devices')
-        if (!devicesResponse.ok) {
-          const contentType = devicesResponse.headers.get('content-type')
+        // Add retry logic for auth timing issues
+        let devicesResponse: Response | null = null
+        let retries = 3
+        let lastError: Error | null = null
+
+        while (retries > 0) {
+          try {
+            devicesResponse = await fetch('/api/devices', {
+              credentials: 'include', // Ensure cookies are sent
+            })
+            
+            if (devicesResponse.ok) {
+              break // Success, exit retry loop
+            }
+
+            // If unauthorized, wait a bit and retry (auth might not be ready)
+            if (devicesResponse.status === 401 && retries > 1) {
+              console.log(`[Device Registration] Auth not ready, retrying in ${(4 - retries) * 200}ms...`)
+              await new Promise(resolve => setTimeout(resolve, (4 - retries) * 200))
+              retries--
+              continue
+            }
+
+            // For other errors, break and handle below
+            break
+          } catch (fetchError) {
+            lastError = fetchError instanceof Error ? fetchError : new Error('Network error')
+            retries--
+            if (retries > 0) {
+              await new Promise(resolve => setTimeout(resolve, (4 - retries) * 200))
+            }
+          }
+        }
+
+        if (!devicesResponse || !devicesResponse.ok) {
+          const contentType = devicesResponse?.headers.get('content-type')
           let errorMessage = 'Failed to fetch devices'
           
-          if (contentType && contentType.includes('application/json')) {
+          if (devicesResponse?.status === 401) {
+            errorMessage = 'Authentication not ready. Please wait a moment and refresh the page.'
+          } else if (contentType && contentType.includes('application/json')) {
             try {
               const error = await devicesResponse.json()
               errorMessage = error.error || errorMessage
             } catch (parseError) {
-              errorMessage = `Server error (${devicesResponse.status}): ${devicesResponse.statusText}`
+              errorMessage = `Server error (${devicesResponse?.status}): ${devicesResponse?.statusText}`
             }
           } else {
-            errorMessage = `Server error (${devicesResponse.status}): ${devicesResponse.statusText}. The API endpoint may not be available.`
+            errorMessage = `Server error (${devicesResponse?.status || 'unknown'}): ${devicesResponse?.statusText || 'Unknown error'}. The API endpoint may not be available.`
           }
           
+          if (lastError) {
+            throw lastError
+          }
           throw new Error(errorMessage)
         }
 
@@ -251,25 +291,63 @@ export function useDeviceRegistration() {
 
         if (!existingDevice) {
           // Register device on server
+          // Add retry logic for auth timing issues
           console.log('[Device Registration] Registering new device with public key length:', publicKeyString.length)
-          const registerResponse = await fetch('/api/devices/register', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              deviceName,
-              deviceType,
-              publicKey: publicKeyString,
-            }),
-          })
+          
+          let registerResponse: Response | null = null
+          let retries = 3
+          let lastError: Error | null = null
+
+          while (retries > 0) {
+            try {
+              registerResponse = await fetch('/api/devices/register', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                credentials: 'include', // Ensure cookies are sent
+                body: JSON.stringify({
+                  deviceName,
+                  deviceType,
+                  publicKey: publicKeyString,
+                }),
+              })
+              
+              if (registerResponse.ok) {
+                break // Success, exit retry loop
+              }
+
+              // If unauthorized, wait a bit and retry (auth might not be ready)
+              if (registerResponse.status === 401 && retries > 1) {
+                console.log(`[Device Registration] Auth not ready, retrying in ${(4 - retries) * 200}ms...`)
+                await new Promise(resolve => setTimeout(resolve, (4 - retries) * 200))
+                retries--
+                continue
+              }
+
+              // For other errors, break and handle below
+              break
+            } catch (fetchError) {
+              lastError = fetchError instanceof Error ? fetchError : new Error('Network error')
+              retries--
+              if (retries > 0) {
+                await new Promise(resolve => setTimeout(resolve, (4 - retries) * 200))
+              }
+            }
+          }
+
+          if (!registerResponse) {
+            throw lastError || new Error('Failed to register device: No response from server')
+          }
 
           if (!registerResponse.ok) {
             // Check if response is JSON
             const contentType = registerResponse.headers.get('content-type')
             let errorMessage = 'Failed to register device'
             
-            if (contentType && contentType.includes('application/json')) {
+            if (registerResponse.status === 401) {
+              errorMessage = 'Authentication not ready. Please wait a moment and refresh the page if this persists.'
+            } else if (contentType && contentType.includes('application/json')) {
               try {
                 const error = await registerResponse.json()
                 errorMessage = error.error || errorMessage
@@ -436,7 +514,7 @@ export function useDeviceRegistration() {
     }, 5 * 60 * 1000) // 5 minutes
 
     return () => clearInterval(interval)
-  }, [userId, isLoaded, state.isRegistered])
+  }, [userId, isLoaded, sessionId, state.isRegistered])
 
   return state
 }
