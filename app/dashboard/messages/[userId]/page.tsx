@@ -147,18 +147,28 @@ export default function ChatPage() {
 
         const keyPair = await importKeyPair(storedKeyPair)
 
-        // Decrypt all messages
+        // Decrypt received messages, use plaintext for sent messages
         const decryptedMessages = await Promise.all(
           storedMessages.map(async (msg) => {
             try {
-              const decrypted = await decryptMessage(
-                msg.encryptedContent,
-                keyPair.privateKey
-              )
+              let messageText: string
+
+              if (msg.isSent) {
+                // Sent messages are stored as plaintext
+                messageText = msg.encryptedContent
+                console.log('[Chat Page] Loaded sent message (plaintext):', msg.messageId)
+              } else {
+                // Received messages need to be decrypted
+                messageText = await decryptMessage(
+                  msg.encryptedContent,
+                  keyPair.privateKey
+                )
+                console.log('[Chat Page] Decrypted received message:', msg.messageId)
+              }
 
               return {
                 id: msg.messageId,
-                message: decrypted,
+                message: messageText,
                 senderId: msg.senderId,
                 receiverId: msg.receiverId,
                 timestamp: new Date(msg.timestamp),
@@ -167,7 +177,7 @@ export default function ChatPage() {
                   : user?.displayName || user?.username || 'Unknown',
               }
             } catch (error) {
-              console.error('[Chat Page] Failed to decrypt message:', msg.messageId, error)
+              console.error('[Chat Page] Failed to process message:', msg.messageId, error)
               return {
                 id: msg.messageId,
                 message: '[Failed to decrypt]',
@@ -584,13 +594,14 @@ export default function ChatPage() {
         const messageId = crypto.randomUUID()
         const conversationId = getConversationId(currentUserId, userId)
 
-        // Store encrypted message in IndexedDB
+        // Store plaintext message in IndexedDB (for sent messages, we store plaintext)
+        // We can't decrypt our own messages since they're encrypted with recipient's public key
         await storeMessage({
           messageId,
           conversationId,
           senderId: currentUserId,
           receiverId: userId,
-          encryptedContent: encryptedMessage,
+          encryptedContent: messageText, // Store plaintext for sent messages
           timestamp: Date.now(),
           isSent: true,
         })
