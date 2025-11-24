@@ -214,6 +214,15 @@ export default function ChatPage() {
 
         setMessages(decryptedMessages)
         console.log('[Chat Page] Loaded and decrypted', decryptedMessages.length, 'messages')
+
+        // Mark messages as read
+        try {
+          const { markConversationAsRead } = await import('@/lib/crypto/message-storage')
+          await markConversationAsRead(conversationId)
+          console.log('[Chat Page] Marked conversation as read')
+        } catch (error) {
+          console.error('[Chat Page] Failed to mark messages as read:', error)
+        }
       } catch (error) {
         console.error('Error loading chat:', error)
       } finally {
@@ -243,6 +252,7 @@ export default function ChatPage() {
           encryptedContent: encryptedMessage,
           timestamp: Date.now(),
           isSent: false,
+          isRead: false, // Mark as unread
         })
 
         console.log('[Chat Page] Stored incoming message in IndexedDB:', messageId)
@@ -333,6 +343,7 @@ export default function ChatPage() {
               encryptedContent: msg.encryptedContent,
               timestamp: msg.timestamp,
               isSent: false,
+              isRead: false, // Mark as unread
               metadataId: msg.id,
             })
 
@@ -623,6 +634,7 @@ export default function ChatPage() {
           encryptedContent: encryptedForStorage, // Store encrypted for defense in depth
           timestamp: Date.now(),
           isSent: true,
+          isRead: true, // Sent messages are always read
         })
 
         console.log('[Chat Page] Stored encrypted outgoing message in IndexedDB:', messageId)

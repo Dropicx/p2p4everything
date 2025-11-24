@@ -25,6 +25,12 @@ export default function MessagesPage() {
 
     async function loadConversations() {
       try {
+        // Get current user's database ID
+        const userResponse = await fetch('/api/users/me')
+        if (!userResponse.ok) return
+        const currentUser = await userResponse.json()
+        const currentUserId = currentUser.id
+
         // Get all accepted connections
         const connectionsResponse = await fetch('/api/connections')
         if (!connectionsResponse.ok) return
@@ -33,6 +39,10 @@ export default function MessagesPage() {
         const acceptedConnections = connectionsData.connections.filter(
           (c: any) => c.status === 'accepted'
         )
+
+        // Get unread counts from IndexedDB
+        const { getAllUnreadCounts, getConversationId } = await import('@/lib/crypto/message-storage')
+        const unreadCounts = await getAllUnreadCounts()
 
         // Get messages for each connection
         const conversationsData = await Promise.all(
@@ -45,6 +55,10 @@ export default function MessagesPage() {
               : { messages: [] }
 
             const lastMessage = messagesData.messages[0] || null
+
+            // Get unread count from IndexedDB
+            const conversationId = getConversationId(currentUserId, conn.otherUser.id)
+            const unreadCount = unreadCounts.get(conversationId) || 0
 
             return {
               userId: conn.otherUser.id,
@@ -60,7 +74,7 @@ export default function MessagesPage() {
               lastMessageTime: lastMessage
                 ? new Date(lastMessage.timestamp)
                 : null,
-              unreadCount: 0, // TODO: Implement unread count
+              unreadCount,
             }
           })
         )
@@ -156,7 +170,7 @@ export default function MessagesPage() {
                     )}
                   </div>
                   {conversation.unreadCount > 0 && (
-                    <span className="px-2 py-1 text-xs bg-blue-600 text-white rounded-full">
+                    <span className="flex items-center justify-center min-w-[24px] h-6 px-2 text-xs font-semibold bg-red-600 text-white rounded-full">
                       {conversation.unreadCount}
                     </span>
                   )}

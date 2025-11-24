@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'p2p4everything-messages'
-const DB_VERSION = 1
+const DB_VERSION = 2 // Incremented for isRead field
 const STORE_NAME = 'messages'
 const DAYS_TO_KEEP = 30
 
@@ -16,6 +16,7 @@ export interface StoredMessage {
   encryptedContent: string // Encrypted message: sent (encrypted with sender's public key) | received (encrypted with recipient's public key)
   timestamp: number // Unix timestamp in milliseconds
   isSent: boolean // true if sent by this user, false if received
+  isRead?: boolean // true if message has been read (default: false for received, true for sent)
   metadataId?: string // Optional link to server metadata
 }
 
@@ -273,4 +274,119 @@ export async function cleanupOldMessages(): Promise<void> {
  */
 export function getConversationId(userId1: string, userId2: string): string {
   return userId1 < userId2 ? `${userId1}-${userId2}` : `${userId2}-${userId1}`
+}
+
+/**
+ * Mark all messages in a conversation as read
+ */
+export async function markConversationAsRead(conversationId: string): Promise<void> {
+  const db = await openDatabase()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const index = store.index('conversationId')
+    const request = index.openCursor(IDBKeyRange.only(conversationId))
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        const message = cursor.value as StoredMessage
+        // Only update received messages that aren't already read
+        if (!message.isSent && !message.isRead) {
+          message.isRead = true
+          cursor.update(message)
+        }
+        cursor.continue()
+      }
+    }
+
+    request.onerror = () => {
+      reject(new Error(`Failed to mark conversation as read: ${request.error}`))
+    }
+
+    transaction.oncomplete = () => {
+      console.log(`[Message Storage] Marked conversation ${conversationId} as read`)
+      db.close()
+      resolve()
+    }
+  })
+}
+
+/**
+ * Get unread message count for a specific conversation
+ */
+export async function getUnreadCount(conversationId: string): Promise<number> {
+  const db = await openDatabase()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const index = store.index('conversationId')
+    const request = index.openCursor(IDBKeyRange.only(conversationId))
+    let unreadCount = 0
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        const message = cursor.value as StoredMessage
+        // Count received messages that haven't been read
+        if (!message.isSent && !message.isRead) {
+          unreadCount++
+        }
+        cursor.continue()
+      } else {
+        resolve(unreadCount)
+      }
+    }
+
+    request.onerror = () => {
+      reject(new Error(`Failed to get unread count: ${request.error}`))
+    }
+
+    transaction.oncomplete = () => {
+      db.close()
+    }
+  })
+}
+
+/**
+ * Get unread counts for all conversations
+ * Returns a map of conversationId -> unread count
+ */
+export async function getAllUnreadCounts(): Promise<Map<string, number>> {
+  const db = await openDatabase()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.openCursor()
+    const unreadCounts = new Map<string, number>()
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        const message = cursor.value as StoredMessage
+        // Count received messages that haven't been read
+        if (!message.isSent && !message.isRead) {
+          const current = unreadCounts.get(message.conversationId) || 0
+          unreadCounts.set(message.conversationId, current + 1)
+        }
+        cursor.continue()
+      } else {
+        resolve(unreadCounts)
+      }
+    }
+
+    request.onerror = () => {
+      reject(new Error(`Failed to get all unread counts: ${request.error}`))
+    }
+
+    transaction.oncomplete = () => {
+      db.close()
+    }
+  })
 }

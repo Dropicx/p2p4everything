@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Navbar } from '@/components/layout/navbar'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useNotifications } from '@/hooks/useNotifications'
+import { useToast, ToastContainer } from '@/components/ui/toast'
 
 export default function DashboardLayout({
   children,
@@ -14,6 +15,7 @@ export default function DashboardLayout({
   const router = useRouter()
   const { onNotification, isReady, client } = useWebRTC()
   const { isSupported, permission, requestPermission, showNotification } = useNotifications()
+  const { toasts, showToast, removeToast } = useToast()
 
   // Request notification permission on dashboard load
   useEffect(() => {
@@ -80,6 +82,14 @@ export default function DashboardLayout({
         } catch (error) {
           console.warn('[Dashboard] Failed to fetch sender info:', error)
         }
+
+        // Show in-app toast notification
+        showToast({
+          title: `New message from ${senderName}`,
+          message: 'Click to view',
+          type: 'info',
+          duration: 5000,
+        })
 
         // Show browser notification
         console.log('[Dashboard] Attempting to show browser notification for:', senderName)
@@ -148,6 +158,7 @@ export default function DashboardLayout({
               encryptedContent: msg.encryptedContent,
               timestamp: msg.timestamp,
               isSent: false,
+              isRead: false, // Mark as unread
               metadataId: msg.id,
             })
 
@@ -172,6 +183,7 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
       <Navbar />
 
       {/* Notification Debug Panel */}
