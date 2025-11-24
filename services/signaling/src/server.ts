@@ -27,6 +27,48 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'signaling-server' })
 })
 
+// Notification endpoint - allows backend to trigger WebSocket notifications
+app.post('/notify', (req, res) => {
+  const { recipientUserId, senderId, messageType = 'message-notification' } = req.body
+
+  if (!recipientUserId) {
+    return res.status(400).json({ error: 'recipientUserId is required' })
+  }
+
+  // Send notification to all connections for this user
+  const userConns = userConnections.get(recipientUserId)
+
+  if (!userConns || userConns.size === 0) {
+    console.log(`[Notify] User ${recipientUserId} is not connected`)
+    return res.json({
+      success: false,
+      message: 'User not connected',
+      recipientUserId
+    })
+  }
+
+  let notifiedCount = 0
+  userConns.forEach((connId) => {
+    const conn = connections.get(connId)
+    if (conn && conn.ws.readyState === WebSocket.OPEN) {
+      conn.ws.send(JSON.stringify({
+        type: messageType,
+        senderId,
+        timestamp: Date.now(),
+      }))
+      notifiedCount++
+    }
+  })
+
+  console.log(`[Notify] Sent ${messageType} to ${notifiedCount} connections for user ${recipientUserId}`)
+
+  res.json({
+    success: true,
+    notifiedCount,
+    recipientUserId
+  })
+})
+
 // Store active connections with user/device mapping
 interface ConnectionInfo {
   ws: WebSocket

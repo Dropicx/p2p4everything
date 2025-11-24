@@ -188,6 +188,38 @@ export async function POST(request: Request) {
 
     console.log(`[Message API] Created message ${message.id} for ${receiver.id}, queued: ${hasEncryptedContent}`)
 
+    // Send WebSocket notification to recipient if message was queued
+    if (hasEncryptedContent) {
+      try {
+        const signalingServerUrl = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:3001'
+        const notifyUrl = `${signalingServerUrl}/notify`
+
+        console.log(`[Message API] Sending notification to ${notifyUrl} for user ${receiver.id}`)
+
+        const notifyResponse = await fetch(notifyUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            recipientUserId: receiver.id,
+            senderId: user.id,
+            messageType: 'message-notification',
+          }),
+        })
+
+        if (notifyResponse.ok) {
+          const result = await notifyResponse.json()
+          console.log(`[Message API] Notification sent: ${result.success}, notified ${result.notifiedCount} connections`)
+        } else {
+          console.warn(`[Message API] Failed to send notification: ${notifyResponse.status}`)
+        }
+      } catch (error) {
+        // Don't fail the request if notification fails - message is already queued
+        console.error('[Message API] Error sending notification:', error)
+      }
+    }
+
     return NextResponse.json(message, { status: 201 })
   } catch (error) {
     if (error instanceof z.ZodError) {

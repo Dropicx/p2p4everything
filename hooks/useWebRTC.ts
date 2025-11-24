@@ -167,6 +167,26 @@ export function useWebRTC() {
     })
   }, [])
 
+  const onNotification = useCallback(
+    (handler: (senderId: string) => void) => {
+      if (!clientRef.current) {
+        console.warn('[useWebRTC] Cannot set notification handler: client not initialized')
+        return () => {}
+      }
+
+      // Listen for message-notification events from signaling server
+      const unsubscribe = clientRef.current.signaling?.onMessage('message-notification', (message) => {
+        if (message.type === 'message-notification' && message.senderId) {
+          console.log('[useWebRTC] Received message notification from:', message.senderId)
+          handler(message.senderId)
+        }
+      })
+
+      return unsubscribe || (() => {})
+    },
+    []
+  )
+
   return {
     client, // Now returns state, not ref - triggers re-renders!
     isReady,
@@ -175,6 +195,7 @@ export function useWebRTC() {
     connectToPeer,
     sendMessage,
     onMessage,
+    onNotification,
     disconnectFromPeer,
   }
 }
