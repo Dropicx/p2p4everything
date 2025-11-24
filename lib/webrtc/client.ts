@@ -10,6 +10,7 @@ export interface WebRTCClientConfig {
   signalingUrl: string
   token?: string
   deviceId?: string
+  databaseUserId?: string
   iceServers?: RTCConfiguration['iceServers']
   onMessage?: (message: string, fromUserId?: string) => void
   onConnectionChange?: (connected: boolean) => void
@@ -54,7 +55,7 @@ export class WebRTCClient {
    * Connect to signaling server
    */
   async connect(): Promise<void> {
-    await this.signaling.connect(this.config.token, this.config.deviceId)
+    await this.signaling.connect(this.config.token, this.config.deviceId, this.config.databaseUserId)
   }
 
   /**

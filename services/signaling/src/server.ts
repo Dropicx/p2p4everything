@@ -31,14 +31,15 @@ app.get('/health', (req, res) => {
 interface ConnectionInfo {
   ws: WebSocket
   connectionId: string
-  userId?: string
+  userId?: string  // Clerk user ID
+  databaseUserId?: string  // Database user ID (UUID)
   deviceId?: string
   lastPing: number
 }
 
 const connections = new Map<string, ConnectionInfo>()
 const rooms = new Map<string, Set<string>>()
-const userConnections = new Map<string, Set<string>>() // userId -> Set of connectionIds
+const userConnections = new Map<string, Set<string>>() // databaseUserId -> Set of connectionIds
 
 // Verify Clerk JWT token
 async function verifyToken(token: string): Promise<{ userId: string } | null> {
@@ -78,8 +79,9 @@ async function verifyToken(token: string): Promise<{ userId: string } | null> {
 // WebSocket connection handling
 wss.on('connection', async (ws: WebSocket, req) => {
   const connectionId = `conn-${Date.now()}-${Math.random()}`
-  
-  let userId: string | undefined
+
+  let userId: string | undefined  // Clerk user ID
+  let databaseUserId: string | undefined  // Database user ID (UUID)
   let deviceId: string | undefined
   let authenticated = false
 
@@ -88,6 +90,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
     const connInfo = connections.get(connectionId)
     if (connInfo) {
       connInfo.userId = userId
+      connInfo.databaseUserId = databaseUserId
       connInfo.deviceId = deviceId
       connections.set(connectionId, connInfo)
     }
@@ -101,17 +104,21 @@ wss.on('connection', async (ws: WebSocket, req) => {
         if (message.token) {
           const auth = await verifyToken(message.token)
           if (auth) {
-            userId = auth.userId
+            userId = auth.userId  // Clerk user ID
             authenticated = true
-            
-            // Track user connections
-            if (!userConnections.has(userId)) {
-              userConnections.set(userId, new Set())
-            }
-            userConnections.get(userId)!.add(connectionId)
           }
         }
-        
+
+        if (message.databaseUserId) {
+          databaseUserId = message.databaseUserId  // Database user ID (UUID)
+
+          // Track user connections by database user ID
+          if (!userConnections.has(databaseUserId)) {
+            userConnections.set(databaseUserId, new Set())
+          }
+          userConnections.get(databaseUserId)!.add(connectionId)
+        }
+
         if (message.deviceId) {
           deviceId = message.deviceId
         }
@@ -160,6 +167,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
     ws,
     connectionId,
     userId,
+    databaseUserId,
     deviceId,
     lastPing: Date.now(),
   }
@@ -170,13 +178,13 @@ wss.on('connection', async (ws: WebSocket, req) => {
   ws.on('close', () => {
     console.log(`Connection closed: ${connectionId}`)
     const connInfo = connections.get(connectionId)
-    
-    if (connInfo?.userId) {
-      const userConns = userConnections.get(connInfo.userId)
+
+    if (connInfo?.databaseUserId) {
+      const userConns = userConnections.get(connInfo.databaseUserId)
       if (userConns) {
         userConns.delete(connectionId)
         if (userConns.size === 0) {
-          userConnections.delete(connInfo.userId)
+          userConnections.delete(connInfo.databaseUserId)
         }
       }
     }
@@ -290,7 +298,7 @@ async function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocke
     return
   }
 
-  console.log(`[Room Join] Connection ${connectionId}${connInfo?.userId ? ` (user: ${connInfo.userId})` : ''} joining room ${roomId}`)
+  console.log(`[Room Join] Connection ${connectionId}${connInfo?.databaseUserId ? ` (db user: ${connInfo.databaseUserId})` : ''}${connInfo?.userId ? ` (clerk user: ${connInfo.userId})` : ''} joining room ${roomId}`)
 
   // Add to in-memory room
   if (!rooms.has(roomId)) {
@@ -319,7 +327,7 @@ async function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocke
       if (peerConn) {
         peers.push({
           connectionId: connId,
-          userId: peerConn.userId,
+          userId: peerConn.databaseUserId,  // Send database user ID to client
           deviceId: peerConn.deviceId,
         })
 
@@ -328,10 +336,10 @@ async function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocke
           type: 'peer-joined',
           connectionId,
           roomId,
-          userId: connInfo?.userId,
+          userId: connInfo?.databaseUserId,  // Send database user ID to client
           deviceId: connInfo?.deviceId,
         }
-        console.log(`[Room Join] Notifying peer ${connId} about new connection ${connectionId}`)
+        console.log(`[Room Join] Notifying peer ${connId} about new connection ${connectionId} (databaseUserId: ${connInfo?.databaseUserId})`)
         peerConn.ws.send(JSON.stringify(peerJoinedMsg))
       }
     }
@@ -393,7 +401,7 @@ function handleGetPeers(connectionId: string, roomId: string, ws: WebSocket) {
       if (peerConn) {
         peers.push({
           connectionId: connId,
-          userId: peerConn.userId,
+          userId: peerConn.databaseUserId,  // Send database user ID to client
           deviceId: peerConn.deviceId,
         })
       }

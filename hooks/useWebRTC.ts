@@ -26,10 +26,23 @@ export function useWebRTC() {
         const token = await getToken()
         const deviceId = localStorage.getItem('p2p4everything-device-id')
 
+        // Fetch database user ID
+        let databaseUserId: string | undefined
+        try {
+          const userResponse = await fetch('/api/users/me')
+          if (userResponse.ok) {
+            const userData = await userResponse.json()
+            databaseUserId = userData.id
+          }
+        } catch (error) {
+          console.warn('[useWebRTC] Failed to fetch database user ID:', error)
+        }
+
         const newClient = new WebRTCClient({
           signalingUrl: SIGNALING_URL,
           token: token || undefined,
           deviceId: deviceId || undefined,
+          databaseUserId: databaseUserId,
           onMessage: (message, fromUserId) => {
             if (fromUserId) {
               const handler = messageHandlersRef.current.get(fromUserId)

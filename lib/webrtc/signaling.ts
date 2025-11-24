@@ -24,6 +24,7 @@ export class SignalingClient {
   private isConnecting = false
   private token: string | null = null
   private deviceId: string | null = null
+  private databaseUserId: string | null = null
 
   constructor(
     private signalingUrl: string,
@@ -33,7 +34,7 @@ export class SignalingClient {
   /**
    * Connect to signaling server
    */
-  async connect(token?: string, deviceId?: string): Promise<void> {
+  async connect(token?: string, deviceId?: string, databaseUserId?: string): Promise<void> {
     if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
       return
     }
@@ -41,6 +42,7 @@ export class SignalingClient {
     this.isConnecting = true
     this.token = token || null
     this.deviceId = deviceId || null
+    this.databaseUserId = databaseUserId || null
 
     return new Promise((resolve, reject) => {
       try {
@@ -54,12 +56,13 @@ export class SignalingClient {
           this.reconnectAttempts = 0
           this.onConnectionChange?.(true)
 
-          // Send authentication and device ID in first message
+          // Send authentication, device ID, and database user ID in first message
           console.log('[Signaling] WebSocket opened, sending authentication...')
           ws.send(JSON.stringify({
             type: 'authenticate',
             token: this.token,
             deviceId: this.deviceId,
+            databaseUserId: this.databaseUserId,
           }))
 
           // Don't resolve yet - wait for 'connected' message to confirm auth is complete
@@ -98,7 +101,7 @@ export class SignalingClient {
           if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++
             setTimeout(() => {
-              this.connect(this.token || undefined, this.deviceId || undefined).catch(() => {
+              this.connect(this.token || undefined, this.deviceId || undefined, this.databaseUserId || undefined).catch(() => {
                 // Silent fail on reconnect
               })
             }, this.reconnectDelay * this.reconnectAttempts)
