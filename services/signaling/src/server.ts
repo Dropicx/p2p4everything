@@ -109,14 +109,15 @@ wss.on('connection', async (ws: WebSocket, req) => {
           }
         }
 
-        if (message.databaseUserId) {
-          databaseUserId = message.databaseUserId  // Database user ID (UUID)
+        if (message.databaseUserId && typeof message.databaseUserId === 'string') {
+          const dbUserId = message.databaseUserId  // Database user ID (UUID)
+          databaseUserId = dbUserId
 
           // Track user connections by database user ID
-          if (!userConnections.has(databaseUserId)) {
-            userConnections.set(databaseUserId, new Set())
+          if (!userConnections.has(dbUserId)) {
+            userConnections.set(dbUserId, new Set())
           }
-          userConnections.get(databaseUserId)!.add(connectionId)
+          userConnections.get(dbUserId)!.add(connectionId)
         }
 
         if (message.deviceId) {
