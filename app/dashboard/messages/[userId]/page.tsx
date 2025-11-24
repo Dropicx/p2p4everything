@@ -10,6 +10,7 @@ import { useWebRTC } from '@/hooks/useWebRTC'
 import { encryptMessage, decryptMessage } from '@/lib/crypto/encryption'
 import { importPublicKey, importKeyPair } from '@/lib/crypto/keys'
 import { getKeyPair as getStoredKeyPair } from '@/lib/crypto/storage'
+import { storeMessage, getConversationId } from '@/lib/crypto/message-storage'
 
 interface Message {
   id: string
@@ -113,41 +114,68 @@ export default function ChatPage() {
           console.error('[Chat Page] Error checking recipient device status:', error)
         }
 
-        // Load messages
-        const messagesResponse = await fetch(`/api/messages?with=${userId}`)
-        if (messagesResponse.ok) {
-          const messagesData = await messagesResponse.json()
-          const formattedMessages = messagesData.messages.map((msg: any) => ({
-            id: msg.id,
-            message: '', // Will be decrypted
-            senderId: msg.senderId,
-            receiverId: msg.receiverId,
-            timestamp: new Date(msg.timestamp),
-            senderName:
-              msg.sender.displayName ||
-              msg.sender.username ||
-              msg.sender.email ||
-              'Unknown',
-          }))
+        // Load messages from IndexedDB
+        const conversationId = getConversationId(currentUserId, userId)
+        console.log('[Chat Page] Loading messages from IndexedDB for conversation:', conversationId)
 
-          // Decrypt messages
-          const deviceId = localStorage.getItem('p2p4everything-device-id')
-          if (deviceId) {
-            const storedKeyPair = await getStoredKeyPair(deviceId)
-            if (storedKeyPair) {
-              const keyPair = await importKeyPair(storedKeyPair)
+        const { getMessages } = await import('@/lib/crypto/message-storage')
+        const storedMessages = await getMessages(conversationId)
+        console.log('[Chat Page] Found', storedMessages.length, 'messages in IndexedDB')
 
-              // Decrypt each message (for now, messages are stored as plaintext in metadata)
-              // In production, you'd decrypt the actual encrypted content
-              for (const msg of formattedMessages) {
-                // TODO: Decrypt message content from encryptedContentHash or separate storage
-                msg.message = '[Encrypted message]' // Placeholder
+        // Get private key for decryption
+        const deviceId = localStorage.getItem('p2p4everything-device-id')
+        if (!deviceId) {
+          console.warn('[Chat Page] No device ID found')
+          setMessages([])
+          return
+        }
+
+        const storedKeyPair = await getStoredKeyPair(deviceId)
+        if (!storedKeyPair) {
+          console.warn('[Chat Page] No stored key pair found')
+          setMessages([])
+          return
+        }
+
+        const keyPair = await importKeyPair(storedKeyPair)
+
+        // Decrypt all messages
+        const decryptedMessages = await Promise.all(
+          storedMessages.map(async (msg) => {
+            try {
+              const decrypted = await decryptMessage(
+                msg.encryptedContent,
+                keyPair.privateKey
+              )
+
+              return {
+                id: msg.messageId,
+                message: decrypted,
+                senderId: msg.senderId,
+                receiverId: msg.receiverId,
+                timestamp: new Date(msg.timestamp),
+                senderName: msg.senderId === currentUserId
+                  ? 'You'
+                  : user?.displayName || user?.username || 'Unknown',
+              }
+            } catch (error) {
+              console.error('[Chat Page] Failed to decrypt message:', msg.messageId, error)
+              return {
+                id: msg.messageId,
+                message: '[Failed to decrypt]',
+                senderId: msg.senderId,
+                receiverId: msg.receiverId,
+                timestamp: new Date(msg.timestamp),
+                senderName: msg.senderId === currentUserId
+                  ? 'You'
+                  : user?.displayName || user?.username || 'Unknown',
               }
             }
-          }
+          })
+        )
 
-          setMessages(formattedMessages)
-        }
+        setMessages(decryptedMessages)
+        console.log('[Chat Page] Loaded and decrypted', decryptedMessages.length, 'messages')
       } catch (error) {
         console.error('Error loading chat:', error)
       } finally {
@@ -164,6 +192,22 @@ export default function ChatPage() {
 
     const unsubscribe = onMessage(userId, async (encryptedMessage) => {
       try {
+        // Generate message ID and store encrypted message first
+        const messageId = crypto.randomUUID()
+        const conversationId = getConversationId(currentUserId, userId)
+
+        await storeMessage({
+          messageId,
+          conversationId,
+          senderId: userId,
+          receiverId: currentUserId,
+          encryptedContent: encryptedMessage,
+          timestamp: Date.now(),
+          isSent: false,
+        })
+
+        console.log('[Chat Page] Stored incoming message in IndexedDB:', messageId)
+
         // Decrypt message
         const deviceId = localStorage.getItem('p2p4everything-device-id')
         if (!deviceId) return
@@ -182,7 +226,7 @@ export default function ChatPage() {
         setMessages((prev) => [
           ...prev,
           {
-            id: `temp-${Date.now()}`,
+            id: messageId,
             message,
             senderId: userId,
             receiverId: currentUserId,
@@ -197,6 +241,95 @@ export default function ChatPage() {
 
     return unsubscribe
   }, [isReady, userId, onMessage, currentUserId, user])
+
+  // Poll for queued offline messages when user comes online
+  useEffect(() => {
+    if (!isReady || !currentUserId) return
+
+    let hasPolled = false // Prevent duplicate polling
+
+    async function fetchQueuedMessages() {
+      if (hasPolled) return
+      hasPolled = true
+
+      try {
+        console.log('[Chat Page] Polling for queued offline messages...')
+        const response = await fetch('/api/messages/queue')
+
+        if (!response.ok) {
+          console.error('[Chat Page] Failed to fetch queued messages:', response.status)
+          return
+        }
+
+        const data = await response.json()
+        const queuedMessages = data.messages || []
+
+        console.log(`[Chat Page] Received ${queuedMessages.length} queued messages`)
+
+        if (queuedMessages.length === 0) return
+
+        // Get private key for decryption
+        const deviceId = localStorage.getItem('p2p4everything-device-id')
+        if (!deviceId) return
+
+        const storedKeyPair = await getStoredKeyPair(deviceId)
+        if (!storedKeyPair) return
+
+        const keyPair = await importKeyPair(storedKeyPair)
+
+        // Process each queued message
+        for (const msg of queuedMessages) {
+          try {
+            const conversationId = getConversationId(currentUserId, msg.senderId)
+
+            // Store in IndexedDB
+            await storeMessage({
+              messageId: msg.messageId,
+              conversationId,
+              senderId: msg.senderId,
+              receiverId: currentUserId,
+              encryptedContent: msg.encryptedContent,
+              timestamp: msg.timestamp,
+              isSent: false,
+              metadataId: msg.id,
+            })
+
+            // If viewing this conversation, decrypt and display
+            if (msg.senderId === userId) {
+              const decrypted = await decryptMessage(
+                msg.encryptedContent,
+                keyPair.privateKey
+              )
+
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: msg.messageId,
+                  message: decrypted,
+                  senderId: msg.senderId,
+                  receiverId: currentUserId,
+                  timestamp: new Date(msg.timestamp),
+                  senderName: msg.senderName || 'Unknown',
+                },
+              ])
+
+              console.log('[Chat Page] Decrypted and displayed queued message:', msg.messageId)
+            } else {
+              console.log('[Chat Page] Stored queued message from another conversation:', msg.messageId)
+            }
+          } catch (error) {
+            console.error('[Chat Page] Failed to process queued message:', msg.messageId, error)
+          }
+        }
+
+        console.log('[Chat Page] Finished processing queued messages')
+      } catch (error) {
+        console.error('[Chat Page] Error fetching queued messages:', error)
+      }
+    }
+
+    fetchQueuedMessages()
+  }, [isReady, currentUserId, userId, user])
 
   // Connect to peer when ready and monitor connection state
   useEffect(() => {
@@ -435,11 +568,30 @@ export default function ChatPage() {
           recipientPublicKey
         )
 
-        // Send via WebRTC
+        // Generate message ID
+        const messageId = crypto.randomUUID()
+        const conversationId = getConversationId(currentUserId, userId)
+
+        // Store encrypted message in IndexedDB
+        await storeMessage({
+          messageId,
+          conversationId,
+          senderId: currentUserId,
+          receiverId: userId,
+          encryptedContent: encryptedMessage,
+          timestamp: Date.now(),
+          isSent: true,
+        })
+
+        console.log('[Chat Page] Stored outgoing message in IndexedDB:', messageId)
+
+        // Try to send via WebRTC first
         const success = sendMessage(userId, encryptedMessage)
 
         if (success) {
-          // Create message metadata
+          // WebRTC send succeeded - create message metadata without encrypted content
+          console.log('[Chat Page] Message sent via WebRTC successfully')
+
           const messageResponse = await fetch('/api/messages', {
             method: 'POST',
             headers: {
@@ -448,7 +600,7 @@ export default function ChatPage() {
             body: JSON.stringify({
               receiverId: userId,
               messageType: 'text',
-              encryptedContentHash: '', // TODO: Calculate hash of encrypted content
+              encryptedContentHash: '', // Optional: Add hash for verification
             }),
           })
 
@@ -468,9 +620,44 @@ export default function ChatPage() {
               },
             ])
           }
-      } else {
-        throw new Error('Failed to send message via WebRTC')
-      }
+        } else {
+          // WebRTC failed - fallback to server queue for offline delivery
+          console.log('[Chat Page] WebRTC send failed, queuing message on server for offline delivery')
+
+          const messageResponse = await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              receiverId: userId,
+              messageType: 'text',
+              encryptedContent: encryptedMessage, // Include encrypted content for offline queue
+              encryptedContentHash: '',
+            }),
+          })
+
+          if (messageResponse.ok) {
+            const newMessage = await messageResponse.json()
+
+            // Add to local messages
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: newMessage.id,
+                message: messageText,
+                senderId: currentUserId,
+                receiverId: userId,
+                timestamp: new Date(newMessage.timestamp),
+                senderName: 'You',
+              },
+            ])
+
+            console.log('[Chat Page] Message queued on server, will be delivered when recipient comes online')
+          } else {
+            throw new Error('Failed to queue message on server')
+          }
+        }
       } catch (error) {
         console.error('Error sending message:', error)
         const errorMessage =

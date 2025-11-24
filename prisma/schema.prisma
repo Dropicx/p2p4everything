@@ -88,17 +88,21 @@ model FileAdvertisement {
 }
 
 model MessageMetadata {
-  id                  String   @id @default(uuid())
+  id                  String    @id @default(uuid())
   senderId            String
   receiverId          String
-  sender              User     @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver            User     @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  messageType         String   // text, file, call
-  encryptedContentHash String? // Hash of encrypted content (for verification)
-  timestamp           DateTime @default(now())
+  sender              User      @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver            User      @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  messageType         String    // text, file, call
+  encryptedContent    String?   @db.Text // Encrypted message for offline delivery
+  delivered           Boolean   @default(false) // Track delivery status
+  expiresAt           DateTime? // Auto-cleanup server copy after delivery
+  encryptedContentHash String?  // Hash of encrypted content (for verification)
+  timestamp           DateTime  @default(now())
 
   @@index([senderId])
   @@index([receiverId])
   @@index([timestamp])
+  @@index([receiverId, delivered]) // Query undelivered messages efficiently
 }
 

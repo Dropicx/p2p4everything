@@ -6,6 +6,7 @@ import { z } from 'zod'
 const createMessageSchema = z.object({
   receiverId: z.string().uuid(),
   messageType: z.enum(['text', 'file', 'call']),
+  encryptedContent: z.string().optional(), // Encrypted message for offline queue
   encryptedContentHash: z.string().optional(),
 })
 
@@ -148,12 +149,21 @@ export async function POST(request: Request) {
       )
     }
 
+    // Determine if this should be queued (has encrypted content for offline delivery)
+    const hasEncryptedContent = !!validatedData.encryptedContent
+    const expiresAt = hasEncryptedContent
+      ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
+      : null
+
     // Create message metadata
     const message = await db.messageMetadata.create({
       data: {
         senderId: user.id,
         receiverId: receiver.id,
         messageType: validatedData.messageType,
+        encryptedContent: validatedData.encryptedContent,
+        delivered: !hasEncryptedContent, // If no encrypted content, consider delivered (sent via WebRTC)
+        expiresAt,
         encryptedContentHash: validatedData.encryptedContentHash,
       },
       include: {
@@ -175,6 +185,8 @@ export async function POST(request: Request) {
         },
       },
     })
+
+    console.log(`[Message API] Created message ${message.id} for ${receiver.id}, queued: ${hasEncryptedContent}`)
 
     return NextResponse.json(message, { status: 201 })
   } catch (error) {
