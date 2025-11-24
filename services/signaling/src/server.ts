@@ -2,7 +2,7 @@ import express from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import http from 'http'
 import { createClerkClient } from '@clerk/express'
-import { RedisManager } from './redis'
+import { RedisManager } from './redis.js'
 
 const app = express()
 app.use(express.json())
