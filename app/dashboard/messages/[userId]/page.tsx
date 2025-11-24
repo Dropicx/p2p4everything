@@ -552,37 +552,18 @@ export default function ChatPage() {
           throw new Error(errorMessage)
         }
 
-        // Check if WebRTC connection is ready
+        // Log WebRTC connection status (but don't block sending)
         if (!isReady || !client) {
-          throw new Error(
-            'WebRTC connection is not ready yet. Please wait a moment and try again.'
-          )
-        }
-
-        // Check if peer connection is established
-        const peerConnection = client.getPeerConnection(userId)
-        if (!peerConnection) {
-          throw new Error(
-            'Peer connection not established yet. The connection is being set up. Please wait a moment and try again.'
-          )
-        }
-
-        const connectionState = peerConnection.getConnectionState()
-        if (connectionState !== 'connected' && connectionState !== 'connecting') {
-          throw new Error(
-            `Peer connection is not ready (state: ${connectionState}). ` +
-            `Please wait for the connection to be established and try again.`
-          )
-        }
-
-        // Check if data channel is open
-        const isDataChannelOpen = client.isDataChannelOpen(userId)
-        if (!isDataChannelOpen) {
-          const channelState = client.getDataChannelState(userId)
-          throw new Error(
-            `Data channel is not open yet (state: ${channelState || 'not found'}). ` +
-            `The connection is still being established. Please wait a moment and try again.`
-          )
+          console.log('[Chat Page] WebRTC not ready, will queue message on server')
+        } else {
+          const peerConnection = client.getPeerConnection(userId)
+          if (peerConnection) {
+            const connectionState = peerConnection.getConnectionState()
+            const channelState = client.getDataChannelState(userId)
+            console.log(`[Chat Page] WebRTC status - Connection: ${connectionState}, Channel: ${channelState}`)
+          } else {
+            console.log('[Chat Page] No peer connection found, will queue message on server')
+          }
         }
 
         // Encrypt message for recipient
@@ -627,8 +608,13 @@ export default function ChatPage() {
 
         console.log('[Chat Page] Stored encrypted outgoing message in IndexedDB:', messageId)
 
-        // Try to send via WebRTC first
-        const success = sendMessage(userId, encryptedMessage)
+        // Try to send via WebRTC first (returns false if not available)
+        let success = false
+        if (isReady && client) {
+          success = sendMessage(userId, encryptedMessage)
+        } else {
+          console.log('[Chat Page] Skipping WebRTC send (not ready), will use server queue')
+        }
 
         if (success) {
           // WebRTC send succeeded - create message metadata without encrypted content
