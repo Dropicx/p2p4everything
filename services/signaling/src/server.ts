@@ -38,7 +38,6 @@ async function verifyToken(token: string): Promise<{ userId: string } | null> {
   }
 
   try {
-    const clerk = clerkClient()
     // Get user from token (Clerk tokens contain user ID)
     // For now, we'll decode the JWT to get the user ID
     // In production, you should use Clerk's proper verification
@@ -46,22 +45,22 @@ async function verifyToken(token: string): Promise<{ userId: string } | null> {
     if (parts.length !== 3) {
       return null
     }
-    
+
     // Decode JWT payload (simple base64 decode)
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
     const userId = payload.sub || payload.user_id
-    
+
     if (userId) {
       // Verify user exists in Clerk
       try {
-        await clerk.users.getUser(userId)
+        await clerkClient.users.getUser(userId)
         return { userId }
       } catch (error) {
         console.error('User verification failed:', error)
         return null
       }
     }
-    
+
     return null
   } catch (error) {
     console.error('Token verification failed:', error)
