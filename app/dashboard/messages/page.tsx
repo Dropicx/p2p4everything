@@ -97,20 +97,20 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="px-4 py-6 sm:px-0">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+    <div className="px-3 py-4 sm:px-4 sm:py-6">
+      <div className="mb-4 sm:mb-6 lg:mb-8">
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">
           Messages
         </h1>
-        <p className="mt-2 text-gray-600 dark:text-gray-400">
+        <p className="mt-1 sm:mt-2 text-sm sm:text-base text-gray-600 dark:text-gray-400">
           Your conversations
         </p>
       </div>
 
       {conversations.length === 0 ? (
         <Card>
-          <div className="text-center py-12">
-            <p className="text-gray-600 dark:text-gray-400">
+          <div className="text-center py-8 sm:py-12">
+            <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
               No conversations yet. Connect with users to start messaging!
             </p>
           </div>
@@ -124,28 +124,28 @@ export default function MessagesPage() {
                 onClick={() =>
                   router.push(`/dashboard/messages/${conversation.userId}`)
                 }
-                className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors"
+                className="p-3 sm:p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors"
               >
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 sm:gap-4">
                   {conversation.userAvatar ? (
                     <img
                       src={conversation.userAvatar}
                       alt={conversation.userName}
-                      className="w-12 h-12 rounded-full"
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-full"
                     />
                   ) : (
-                    <div className="w-12 h-12 rounded-full bg-gray-300 dark:bg-gray-700 flex items-center justify-center">
-                      <span className="text-gray-600 dark:text-gray-400">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gray-300 dark:bg-gray-700 flex items-center justify-center">
+                      <span className="text-sm sm:text-base text-gray-600 dark:text-gray-400">
                         {conversation.userName[0].toUpperCase()}
                       </span>
                     </div>
                   )}
-                  <div className="flex-1">
-                    <h3 className="font-medium text-gray-900 dark:text-white">
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm sm:text-base font-medium text-gray-900 dark:text-white">
                       {conversation.userName}
                     </h3>
                     {conversation.lastMessage && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                      <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 truncate">
                         {conversation.lastMessage}
                       </p>
                     )}

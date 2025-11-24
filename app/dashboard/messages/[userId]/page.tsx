@@ -37,6 +37,7 @@ export default function ChatPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSending, setIsSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const { client, isReady, sendMessage, onMessage, connectToPeer } = useWebRTC()
 
   useEffect(() => {
@@ -173,22 +174,72 @@ export default function ChatPage() {
       if (!userId || !currentUserId || isSending) return
 
       setIsSending(true)
+      setSendError(null)
 
       try {
         // Get recipient's public key
         const devicesResponse = await fetch(`/api/users/${userId}/devices`)
         if (!devicesResponse.ok) {
-          throw new Error('Failed to get recipient devices')
+          const errorData = await devicesResponse.json().catch(() => ({}))
+          throw new Error(errorData.error || 'Failed to get recipient devices')
         }
 
         const devices = await devicesResponse.json()
 
-        if (devices.length === 0 || !devices[0].publicKey) {
-          throw new Error('Recipient has no public key')
+        console.log('Recipient devices:', devices)
+
+        // Find a device with a valid public key
+        let recipientPublicKey: CryptoKey | null = null
+        let deviceWithKey = null
+
+        for (const device of devices) {
+          if (device.publicKey && device.publicKey.trim()) {
+            try {
+              // Try to parse and import the public key
+              // The public key should be a JSON string (JWK format)
+              let publicKeyString = device.publicKey
+              
+              // If it's already a string, try parsing it
+              if (typeof publicKeyString === 'string') {
+                try {
+                  const parsed = JSON.parse(publicKeyString)
+                  if (parsed && parsed.kty) {
+                    // Valid JWK format, use the original string
+                    recipientPublicKey = await importPublicKey(publicKeyString)
+                    deviceWithKey = device
+                    break
+                  }
+                } catch (parseError) {
+                  // Not valid JSON, might be a different format
+                  console.warn('Public key is not valid JSON:', parseError)
+                }
+              }
+            } catch (importError) {
+              console.warn('Failed to import public key from device:', device.id, importError)
+              continue
+            }
+          } else {
+            console.log('Device has no public key:', device.id, device.deviceName)
+          }
         }
 
-        // Import recipient's public key
-        const recipientPublicKey = await importPublicKey(devices[0].publicKey)
+        if (!recipientPublicKey || !deviceWithKey) {
+          const deviceCount = devices.length
+          const hasDevices = deviceCount > 0
+          const hasDevicesWithoutKeys = devices.some((d: any) => !d.publicKey || !d.publicKey.trim())
+          
+          let errorMessage = 'Cannot send encrypted message. '
+          if (!hasDevices) {
+            errorMessage += 'The recipient has not registered any devices yet. '
+          } else if (hasDevicesWithoutKeys) {
+            errorMessage += 'The recipient\'s devices do not have encryption keys registered. '
+          } else {
+            errorMessage += 'Could not find a valid encryption key for the recipient. '
+          }
+          errorMessage += 'Ask them to visit their dashboard to register their device with encryption keys.'
+          
+          throw new Error(errorMessage)
+        }
 
         // Encrypt message
         const encryptedMessage = await encryptMessage(
@@ -232,17 +283,21 @@ export default function ChatPage() {
       } else {
         throw new Error('Failed to send message via WebRTC')
       }
-    } catch (error) {
-      console.error('Error sending message:', error)
-      alert(
-        error instanceof Error
-          ? error.message
-          : 'Failed to send message. Make sure you are connected to the peer.'
-      )
-    } finally {
-      setIsSending(false)
-    }
-  },
+      } catch (error) {
+        console.error('Error sending message:', error)
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : 'Failed to send message. Make sure you are connected to the peer.'
+        setSendError(errorMessage)
+        // Also show alert for immediate feedback
+        setTimeout(() => {
+          alert(errorMessage)
+        }, 100)
+      } finally {
+        setIsSending(false)
+      }
+    },
     [userId, currentUserId, sendMessage, isSending]
   )
 
@@ -304,6 +359,58 @@ export default function ChatPage() {
         messages={messages}
         currentUserId={currentUserId || ''}
       />
+
+      {sendError && (
+        <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-red-50 dark:bg-red-900/20">
+          <div className="flex items-start gap-2">
+            <svg
+              className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0"
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                Cannot send encrypted message
+              </p>
+              <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                {sendError}
+              </p>
+              <button
+                onClick={async () => {
+                  setSendError(null)
+                  // Try to refresh and retry
+                  const devicesResponse = await fetch(`/api/users/${userId}/devices`)
+                  if (devicesResponse.ok) {
+                    const devices = await devicesResponse.json()
+                    console.log('Refreshed recipient devices:', devices)
+                  }
+                }}
+                className="mt-2 text-xs text-red-700 dark:text-red-300 hover:underline"
+              >
+                Refresh & Retry
+              </button>
+            </div>
+            <button
+              onClick={() => setSendError(null)}
+              className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+            >
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
 
       <MessageInput onSend={handleSend} disabled={!isReady || isSending} />
     </div>

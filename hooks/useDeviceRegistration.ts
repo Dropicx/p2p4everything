@@ -196,7 +196,29 @@ export function useDeviceRegistration() {
             publicKeyFingerprint: fingerprint,
           })
         } else {
-          // Device already registered, just update lastSeen
+          // Device already registered
+          // Check if it has a public key, if not, update it
+          if (!existingDevice.publicKey || existingDevice.publicKey.trim() === '') {
+            // Update device with public key
+            try {
+              const updateResponse = await fetch(`/api/devices/${existingDevice.id}`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  publicKey: publicKeyString,
+                }),
+              })
+
+              if (!updateResponse.ok) {
+                console.warn('Failed to update device public key')
+              }
+            } catch (updateError) {
+              console.warn('Error updating device public key:', updateError)
+            }
+          }
+
           const publicKey = await importPublicKey(publicKeyString)
           const fingerprint = await getKeyFingerprint(publicKey)
 
