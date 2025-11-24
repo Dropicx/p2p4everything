@@ -213,6 +213,11 @@ export default function ChatPage() {
       const roomId = getRoomId(currentUserId, userId)
       console.log(`[Chat Page] Joining room: ${roomId}`)
 
+      // Determine who initiates the connection using a tiebreaker
+      // The peer with the lexicographically larger user ID creates the offer
+      const shouldInitiate = currentUserId > userId
+      console.log(`[Chat Page] Connection role: ${shouldInitiate ? 'INITIATOR' : 'RESPONDER'} (currentUserId: ${currentUserId}, userId: ${userId})`)
+
       // Set up room-joined handler to wait for confirmation before connecting
       const unsubscribeRoomJoined = client.signaling?.onMessage('room-joined', (message) => {
         if (message.type === 'room-joined' && message.roomId === roomId) {
@@ -220,11 +225,14 @@ export default function ChatPage() {
           console.log('[Chat Page] Peers in room:', message.peers?.length || 0)
 
           if (message.peers && message.peers.length > 0) {
-            console.log('[Chat Page] Recipient is online, connecting to peer...')
-            // Recipient is in the room, connect to them
-            connectToPeer(userId, undefined, roomId).catch((error) => {
-              console.error('[Chat Page] Error connecting to peer:', error)
-            })
+            if (shouldInitiate) {
+              console.log('[Chat Page] Recipient is online, initiating connection as INITIATOR...')
+              connectToPeer(userId, undefined, roomId).catch((error) => {
+                console.error('[Chat Page] Error connecting to peer:', error)
+              })
+            } else {
+              console.log('[Chat Page] Recipient is online, waiting for offer as RESPONDER...')
+            }
           } else {
             console.warn('[Chat Page] Recipient is not online. Waiting for them to join...')
           }
@@ -234,10 +242,14 @@ export default function ChatPage() {
       // Listen for peer-joined events (when recipient comes online)
       const unsubscribePeerJoined = client.signaling?.onMessage('peer-joined', (message) => {
         if (message.type === 'peer-joined' && message.roomId === roomId && message.userId === userId) {
-          console.log('[Chat Page] Recipient just came online, connecting...')
-          connectToPeer(userId, undefined, roomId).catch((error) => {
-            console.error('[Chat Page] Error connecting to peer:', error)
-          })
+          if (shouldInitiate) {
+            console.log('[Chat Page] Recipient just came online, initiating connection as INITIATOR...')
+            connectToPeer(userId, undefined, roomId).catch((error) => {
+              console.error('[Chat Page] Error connecting to peer:', error)
+            })
+          } else {
+            console.log('[Chat Page] Recipient just came online, waiting for offer as RESPONDER...')
+          }
         }
       })
 
