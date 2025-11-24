@@ -42,13 +42,34 @@ function getDeviceName(): string {
   let deviceName = localStorage.getItem(DEVICE_NAME_KEY)
   if (!deviceName) {
     const userAgent = navigator.userAgent
-    if (userAgent.includes('Mobile')) {
-      deviceName = 'Mobile Device'
-    } else if (userAgent.includes('Tablet')) {
+    const platform = navigator.platform || ''
+    
+    // More specific device detection
+    if (/iPhone|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(userAgent)) {
+      // Try to detect specific device
+      if (/iPhone/i.test(userAgent)) {
+        deviceName = 'iPhone'
+      } else if (/iPad/i.test(userAgent)) {
+        deviceName = 'iPad'
+      } else if (/Android/i.test(userAgent)) {
+        // Try to get Android version or model
+        const androidMatch = userAgent.match(/Android\s([0-9\.]*)/)
+        deviceName = androidMatch ? `Android ${androidMatch[1]}` : 'Android Device'
+      } else {
+        deviceName = 'Mobile Device'
+      }
+    } else if (/Tablet|iPad/i.test(userAgent)) {
       deviceName = 'Tablet'
     } else {
-      deviceName = 'Web Browser'
+      // Desktop browser - include browser name
+      const browserMatch = userAgent.match(/(Chrome|Firefox|Safari|Edge|Opera|Vivaldi)\/([0-9\.]*)/)
+      if (browserMatch) {
+        deviceName = `${browserMatch[1]} Browser`
+      } else {
+        deviceName = 'Web Browser'
+      }
     }
+    
     localStorage.setItem(DEVICE_NAME_KEY, deviceName)
   }
   return deviceName
@@ -92,24 +113,67 @@ export function useDeviceRegistration() {
     }
 
     async function registerDevice() {
+      // Check browser capabilities first
+      if (!window.crypto || !window.crypto.subtle) {
+        setState((prev) => ({
+          ...prev,
+          isRegistering: false,
+          error: 'Web Crypto API is not available in this browser. Please use a modern browser.',
+        }))
+        return
+      }
+
+      if (!window.indexedDB) {
+        setState((prev) => ({
+          ...prev,
+          isRegistering: false,
+          error: 'IndexedDB is not available in this browser. Please use a modern browser.',
+        }))
+        return
+      }
+
       // Check if already registered in this session
       const alreadyRegistered = localStorage.getItem(DEVICE_REGISTERED_KEY)
       if (alreadyRegistered === 'true') {
-        // Just load the existing state
-        const deviceId = getDeviceId()
-        const storedKeyPair = await getKeyPair(deviceId)
-        if (storedKeyPair) {
-          const publicKey = await importPublicKey(storedKeyPair.publicKey)
-          const fingerprint = await getKeyFingerprint(publicKey)
-          setState({
-            deviceId,
-            isRegistered: true,
-            isRegistering: false,
-            error: null,
-            publicKeyFingerprint: fingerprint,
-          })
+        // Verify device is actually registered on server
+        try {
+          const deviceId = getDeviceId()
+          const storedKeyPair = await getKeyPair(deviceId)
+          if (storedKeyPair) {
+            // Verify device exists on server
+            const devicesResponse = await fetch('/api/devices')
+            if (devicesResponse.ok) {
+              const devices = await devicesResponse.json()
+              const deviceName = getDeviceName()
+              const deviceType = getDeviceType()
+              const serverDevice = devices.find(
+                (d: any) => d.deviceName === deviceName && d.deviceType === deviceType
+              )
+
+              if (serverDevice) {
+                // Device exists on server, load state
+                const publicKey = await importPublicKey(storedKeyPair.publicKey)
+                const fingerprint = await getKeyFingerprint(publicKey)
+                setState({
+                  deviceId: serverDevice.id,
+                  isRegistered: true,
+                  isRegistering: false,
+                  error: null,
+                  publicKeyFingerprint: fingerprint,
+                })
+                return
+              } else {
+                // Device not on server, clear flag and re-register
+                console.log('[Device Registration] Device marked as registered but not found on server, re-registering...')
+                localStorage.removeItem(DEVICE_REGISTERED_KEY)
+              }
+            }
+          }
+        } catch (error) {
+          console.error('[Device Registration] Error verifying device registration:', error)
+          // Clear flag and try to register again
+          localStorage.removeItem(DEVICE_REGISTERED_KEY)
         }
-        return
       }
 
       registrationInProgress.current = true
@@ -261,11 +325,23 @@ export function useDeviceRegistration() {
           // This is handled by the periodic update below
         }
       } catch (error) {
-        console.error('Device registration error:', error)
+        console.error('[Device Registration] Device registration error:', error)
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        
+        // Provide more helpful error messages
+        let userFriendlyError = errorMessage
+        if (errorMessage.includes('IndexedDB')) {
+          userFriendlyError = 'Failed to store encryption keys. Please check your browser settings and allow storage.'
+        } else if (errorMessage.includes('crypto') || errorMessage.includes('Crypto')) {
+          userFriendlyError = 'Encryption is not supported in this browser. Please use a modern browser like Chrome, Firefox, or Safari.'
+        } else if (errorMessage.includes('Failed to fetch')) {
+          userFriendlyError = 'Network error. Please check your internet connection and try again.'
+        }
+        
         setState((prev) => ({
           ...prev,
           isRegistering: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: userFriendlyError,
         }))
       } finally {
         registrationInProgress.current = false
