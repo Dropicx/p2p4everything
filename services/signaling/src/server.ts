@@ -437,7 +437,7 @@ function handleSignalingMessage(connectionId: string, message: any, connInfo: Co
   const messagePayload = {
     ...message,
     fromConnectionId: connectionId,
-    fromUserId: connInfo.userId,
+    fromUserId: connInfo.databaseUserId,  // Send database user ID
     fromDeviceId: connInfo.deviceId,
   }
 
@@ -491,7 +491,7 @@ function handleSignalingMessage(connectionId: string, message: any, connInfo: Co
             conn.ws.send(JSON.stringify({
               ...message,
               fromConnectionId: connectionId,
-              fromUserId: connInfo?.userId,
+              fromUserId: connInfo?.databaseUserId,  // Send database user ID
               fromDeviceId: connInfo?.deviceId,
             }))
           }
