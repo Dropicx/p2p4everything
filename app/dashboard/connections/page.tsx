@@ -5,6 +5,7 @@ import { UserSearch } from '@/components/connections/user-search'
 import { UserCard } from '@/components/connections/user-card'
 import { ConnectionList } from '@/components/connections/connection-list'
 import { Card } from '@/components/ui/card'
+import { useWebRTC } from '@/hooks/useWebRTC'
 
 interface User {
   id: string
@@ -37,10 +38,54 @@ export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Connection[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'all' | 'pending' | 'accepted'>('all')
+  const { client, isReady } = useWebRTC()
 
   useEffect(() => {
     loadConnections()
   }, [])
+
+  // Listen for real-time connection updates via WebSocket
+  useEffect(() => {
+    if (!isReady || !client) return
+
+    console.log('[Connections] Setting up real-time connection listeners')
+
+    const unsubscribeRequest = client.signaling?.onMessage('connection-request', (message) => {
+      if (message.type === 'connection-request') {
+        console.log('[Connections] Received connection request notification')
+        loadConnections() // Reload to show new request
+      }
+    })
+
+    const unsubscribeAccepted = client.signaling?.onMessage('connection-accepted', (message) => {
+      if (message.type === 'connection-accepted') {
+        console.log('[Connections] Connection accepted notification')
+        loadConnections() // Reload to update status
+      }
+    })
+
+    const unsubscribeRejected = client.signaling?.onMessage('connection-rejected', (message) => {
+      if (message.type === 'connection-rejected') {
+        console.log('[Connections] Connection rejected notification')
+        loadConnections() // Reload to remove/update
+      }
+    })
+
+    const unsubscribeRemoved = client.signaling?.onMessage('connection-removed', (message) => {
+      if (message.type === 'connection-removed') {
+        console.log('[Connections] Connection removed notification')
+        loadConnections() // Reload to remove connection
+      }
+    })
+
+    return () => {
+      console.log('[Connections] Cleaning up real-time connection listeners')
+      unsubscribeRequest?.()
+      unsubscribeAccepted?.()
+      unsubscribeRejected?.()
+      unsubscribeRemoved?.()
+    }
+  }, [isReady, client])
 
   const loadConnections = async () => {
     setIsLoading(true)
@@ -79,9 +124,13 @@ export default function ConnectionsPage() {
         throw new Error(error.error || 'Failed to send connection request')
       }
 
-      alert('Connection request sent!')
+      const newConnection = await response.json()
+
+      // Optimistic update: add to list immediately
+      setConnections(prev => [newConnection, ...prev])
       setSelectedUser(null)
-      loadConnections()
+
+      console.log('[Connections] Connection request sent successfully')
     } catch (error) {
       console.error('Error sending connection request:', error)
       alert(error instanceof Error ? error.message : 'Failed to send connection request')
@@ -91,6 +140,15 @@ export default function ConnectionsPage() {
   }
 
   const handleAccept = async (connectionId: string) => {
+    // Optimistic update
+    setConnections(prev =>
+      prev.map(conn =>
+        conn.id === connectionId
+          ? { ...conn, status: 'accepted' as const }
+          : conn
+      )
+    )
+
     try {
       const response = await fetch(`/api/connections/${connectionId}`, {
         method: 'PATCH',
@@ -104,14 +162,19 @@ export default function ConnectionsPage() {
         throw new Error('Failed to accept connection')
       }
 
-      loadConnections()
+      console.log('[Connections] Connection accepted successfully')
     } catch (error) {
       console.error('Error accepting connection:', error)
       alert('Failed to accept connection')
+      // Revert on error
+      loadConnections()
     }
   }
 
   const handleDecline = async (connectionId: string) => {
+    // Optimistic update: remove immediately
+    setConnections(prev => prev.filter(conn => conn.id !== connectionId))
+
     try {
       const response = await fetch(`/api/connections/${connectionId}`, {
         method: 'DELETE',
@@ -121,10 +184,12 @@ export default function ConnectionsPage() {
         throw new Error('Failed to decline connection')
       }
 
-      loadConnections()
+      console.log('[Connections] Connection declined successfully')
     } catch (error) {
       console.error('Error declining connection:', error)
       alert('Failed to decline connection')
+      // Revert on error
+      loadConnections()
     }
   }
 
@@ -132,6 +197,15 @@ export default function ConnectionsPage() {
     if (!confirm('Are you sure you want to block this user?')) {
       return
     }
+
+    // Optimistic update
+    setConnections(prev =>
+      prev.map(conn =>
+        conn.id === connectionId
+          ? { ...conn, status: 'blocked' as const }
+          : conn
+      )
+    )
 
     try {
       const response = await fetch(`/api/connections/${connectionId}`, {
@@ -146,10 +220,12 @@ export default function ConnectionsPage() {
         throw new Error('Failed to block connection')
       }
 
-      loadConnections()
+      console.log('[Connections] Connection blocked successfully')
     } catch (error) {
       console.error('Error blocking connection:', error)
       alert('Failed to block connection')
+      // Revert on error
+      loadConnections()
     }
   }
 
@@ -157,6 +233,9 @@ export default function ConnectionsPage() {
     if (!confirm('Are you sure you want to remove this connection?')) {
       return
     }
+
+    // Optimistic update: remove immediately
+    setConnections(prev => prev.filter(conn => conn.id !== connectionId))
 
     try {
       const response = await fetch(`/api/connections/${connectionId}`, {
@@ -167,10 +246,12 @@ export default function ConnectionsPage() {
         throw new Error('Failed to remove connection')
       }
 
-      loadConnections()
+      console.log('[Connections] Connection removed successfully')
     } catch (error) {
       console.error('Error removing connection:', error)
       alert('Failed to remove connection')
+      // Revert on error
+      loadConnections()
     }
   }
 

@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { sendWebSocketNotification } from '@/lib/notifications'
 
 const updateConnectionSchema = z.object({
   status: z.enum(['pending', 'accepted', 'blocked']),
@@ -86,6 +87,30 @@ export async function PATCH(
       },
     })
 
+    // Send real-time notification to the other user
+    const otherUserId = connection.userAId === user.id ? connection.userBId : connection.userAId
+    if (validatedData.status === 'accepted') {
+      await sendWebSocketNotification(
+        otherUserId,
+        'connection-accepted',
+        {
+          fromUserId: user.id,
+          connectionId: connection.id,
+          timestamp: Date.now(),
+        }
+      )
+    } else if (validatedData.status === 'blocked') {
+      await sendWebSocketNotification(
+        otherUserId,
+        'connection-rejected',
+        {
+          fromUserId: user.id,
+          connectionId: connection.id,
+          timestamp: Date.now(),
+        }
+      )
+    }
+
     return NextResponse.json(updatedConnection)
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -138,6 +163,18 @@ export async function DELETE(
     if (connection.userAId !== user.id && connection.userBId !== user.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
+
+    // Send real-time notification to the other user before deleting
+    const otherUserId = connection.userAId === user.id ? connection.userBId : connection.userAId
+    await sendWebSocketNotification(
+      otherUserId,
+      'connection-removed',
+      {
+        fromUserId: user.id,
+        connectionId: connection.id,
+        timestamp: Date.now(),
+      }
+    )
 
     // Delete connection
     await db.connection.delete({

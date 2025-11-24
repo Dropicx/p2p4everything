@@ -2,6 +2,7 @@ import { auth } from '@clerk/nextjs/server'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { sendWebSocketNotification } from '@/lib/notifications'
 
 const createConnectionSchema = z.object({
   targetUserId: z.string().uuid(),
@@ -164,6 +165,17 @@ export async function POST(request: Request) {
         },
       },
     })
+
+    // Send real-time notification to target user
+    await sendWebSocketNotification(
+      targetUser.id,
+      'connection-request',
+      {
+        fromUserId: user.id,
+        connectionId: connection.id,
+        timestamp: Date.now(),
+      }
+    )
 
     return NextResponse.json(connection, { status: 201 })
   } catch (error) {

@@ -12,6 +12,10 @@ export type SignalingMessage =
   | { type: 'answer'; fromConnectionId: string; sdp: string; targetConnectionId?: string; targetUserId?: string; roomId?: string }
   | { type: 'ice-candidate'; fromConnectionId: string; candidate: RTCIceCandidateInit; targetConnectionId?: string; targetUserId?: string; roomId?: string }
   | { type: 'message-notification'; senderId: string; timestamp: number }
+  | { type: 'connection-request'; fromUserId: string; connectionId: string; timestamp: number }
+  | { type: 'connection-accepted'; fromUserId: string; connectionId: string; timestamp: number }
+  | { type: 'connection-rejected'; fromUserId: string; connectionId: string; timestamp: number }
+  | { type: 'connection-removed'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 
