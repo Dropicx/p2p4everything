@@ -11,6 +11,7 @@ export type SignalingMessage =
   | { type: 'offer'; fromConnectionId: string; sdp: string; targetConnectionId?: string; targetUserId?: string; roomId?: string }
   | { type: 'answer'; fromConnectionId: string; sdp: string; targetConnectionId?: string; targetUserId?: string; roomId?: string }
   | { type: 'ice-candidate'; fromConnectionId: string; candidate: RTCIceCandidateInit; targetConnectionId?: string; targetUserId?: string; roomId?: string }
+  | { type: 'message-notification'; senderId: string; timestamp: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 
