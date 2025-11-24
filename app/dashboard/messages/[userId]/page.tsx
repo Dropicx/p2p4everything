@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import { useParams, useRouter } from 'next/navigation'
 import { MessageList } from '@/components/messages/message-list'
@@ -10,7 +10,7 @@ import { useWebRTC } from '@/hooks/useWebRTC'
 import { encryptMessage, decryptMessage } from '@/lib/crypto/encryption'
 import { importPublicKey, importKeyPair } from '@/lib/crypto/keys'
 import { getKeyPair as getStoredKeyPair } from '@/lib/crypto/storage'
-import { storeMessage, getConversationId } from '@/lib/crypto/message-storage'
+import { storeMessage, getConversationId, clearConversation } from '@/lib/crypto/message-storage'
 
 interface Message {
   id: string
@@ -46,6 +46,9 @@ export default function ChatPage() {
   } | null>(null)
   const [peerConnectionState, setPeerConnectionState] = useState<string | null>(null)
   const [dataChannelState, setDataChannelState] = useState<string | null>(null)
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [isClearing, setIsClearing] = useState(false)
+  const optionsMenuRef = useRef<HTMLDivElement>(null)
   const { client, isReady, sendMessage, onMessage, connectToPeer } = useWebRTC()
 
   // Create a normalized room ID that's the same for both users
@@ -54,6 +57,22 @@ export default function ChatPage() {
     const sortedIds = [userId1, userId2].sort()
     return `chat-${sortedIds[0]}-${sortedIds[1]}`
   }, [])
+
+  // Close options menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (optionsMenuRef.current && !optionsMenuRef.current.contains(event.target as Node)) {
+        setShowOptionsMenu(false)
+      }
+    }
+
+    if (showOptionsMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [showOptionsMenu])
 
   useEffect(() => {
     if (!userId) return
@@ -704,6 +723,50 @@ export default function ChatPage() {
     [userId, currentUserId, sendMessage, isSending, client, isReady]
   )
 
+  const handleClearChat = useCallback(async () => {
+    if (!userId || !currentUserId || isClearing) return
+
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      'Are you sure you want to clear this chat? This will delete all messages locally and from the server. This action cannot be undone.'
+    )
+
+    if (!confirmed) return
+
+    setIsClearing(true)
+    setShowOptionsMenu(false)
+
+    try {
+      // Clear local IndexedDB messages
+      const conversationId = getConversationId(currentUserId, userId)
+      const deletedLocalCount = await clearConversation(conversationId)
+      console.log(`[Clear Chat] Deleted ${deletedLocalCount} local messages`)
+
+      // Clear server-side message metadata
+      const response = await fetch(`/api/messages/conversation/${userId}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete messages from server')
+      }
+
+      const result = await response.json()
+      console.log(`[Clear Chat] Deleted ${result.deletedCount} server messages`)
+
+      // Clear messages from UI
+      setMessages([])
+
+      // Show success message
+      alert(`Chat cleared successfully! Deleted ${deletedLocalCount} local messages and ${result.deletedCount} server messages.`)
+    } catch (error) {
+      console.error('[Clear Chat] Error clearing chat:', error)
+      alert('Failed to clear chat. Please try again.')
+    } finally {
+      setIsClearing(false)
+    }
+  }, [userId, currentUserId, isClearing])
+
   if (isLoading) {
     return (
       <div className="flex h-screen">
@@ -748,13 +811,42 @@ export default function ChatPage() {
               </span>
             </div>
           )}
-          <div>
+          <div className="flex-1">
             <h2 className="font-semibold text-gray-900 dark:text-white">
               {user.displayName || user.username || user.email || 'Unknown User'}
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-500">
               {isReady ? 'Connected' : 'Connecting...'}
             </p>
+          </div>
+
+          {/* Options Menu */}
+          <div className="relative" ref={optionsMenuRef}>
+            <button
+              onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+              className="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+              aria-label="Options"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z" />
+              </svg>
+            </button>
+
+            {showOptionsMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 z-50">
+                <button
+                  onClick={handleClearChat}
+                  disabled={isClearing}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                >
+                  {isClearing ? 'Clearing...' : 'Clear Chat'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
