@@ -77,7 +77,7 @@ export function useNotifications() {
       try {
         const notification = new Notification(options.title, {
           body: options.body,
-          icon: options.icon || '/icon.png',
+          icon: options.icon, // Let browser use default if not specified
           tag: options.tag,
           data: options.data,
           requireInteraction: false,
