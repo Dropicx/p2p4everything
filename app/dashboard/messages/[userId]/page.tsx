@@ -208,8 +208,25 @@ export default function ChatPage() {
       // Set up room-joined handler to wait for confirmation before connecting
       const unsubscribeRoomJoined = client.signaling?.onMessage('room-joined', (message) => {
         if (message.type === 'room-joined' && message.roomId === roomId) {
-          console.log('[Chat Page] Room joined confirmed, connecting to peer...')
-          // Now try to connect to peer
+          console.log('[Chat Page] Room joined confirmed')
+          console.log('[Chat Page] Peers in room:', message.peers?.length || 0)
+
+          if (message.peers && message.peers.length > 0) {
+            console.log('[Chat Page] Recipient is online, connecting to peer...')
+            // Recipient is in the room, connect to them
+            connectToPeer(userId, undefined, roomId).catch((error) => {
+              console.error('[Chat Page] Error connecting to peer:', error)
+            })
+          } else {
+            console.warn('[Chat Page] Recipient is not online. Waiting for them to join...')
+          }
+        }
+      })
+
+      // Listen for peer-joined events (when recipient comes online)
+      const unsubscribePeerJoined = client.signaling?.onMessage('peer-joined', (message) => {
+        if (message.type === 'peer-joined' && message.roomId === roomId && message.userId === userId) {
+          console.log('[Chat Page] Recipient just came online, connecting...')
           connectToPeer(userId, undefined, roomId).catch((error) => {
             console.error('[Chat Page] Error connecting to peer:', error)
           })
@@ -237,6 +254,7 @@ export default function ChatPage() {
       return () => {
         // Clean up handlers and interval
         unsubscribeRoomJoined?.()
+        unsubscribePeerJoined?.()
         clearInterval(checkInterval)
         // Leave room when unmounting
         client.leaveRoom(roomId)
