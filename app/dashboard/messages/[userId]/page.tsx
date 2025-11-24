@@ -47,6 +47,13 @@ export default function ChatPage() {
   const [dataChannelState, setDataChannelState] = useState<string | null>(null)
   const { client, isReady, sendMessage, onMessage, connectToPeer } = useWebRTC()
 
+  // Create a normalized room ID that's the same for both users
+  const getRoomId = useCallback((userId1: string, userId2: string): string => {
+    // Sort user IDs to ensure consistent room ID regardless of who opens chat
+    const sortedIds = [userId1, userId2].sort()
+    return `chat-${sortedIds[0]}-${sortedIds[1]}`
+  }, [])
+
   useEffect(() => {
     if (!userId) return
 
@@ -193,17 +200,18 @@ export default function ChatPage() {
 
   // Connect to peer when ready and monitor connection state
   useEffect(() => {
-    if (isReady && userId && client) {
-      // Use user ID as room ID for P2P connection
-      const roomId = `user-${userId}`
+    if (isReady && userId && currentUserId && client) {
+      // Use normalized room ID so both users join the same room
+      const roomId = getRoomId(currentUserId, userId)
+      console.log(`[Chat Page] Joining room: ${roomId}`)
 
       // Set up room-joined handler to wait for confirmation before connecting
       const unsubscribeRoomJoined = client.signaling?.onMessage('room-joined', (message) => {
         if (message.type === 'room-joined' && message.roomId === roomId) {
-          console.log('Room joined confirmed, connecting to peer...')
+          console.log('[Chat Page] Room joined confirmed, connecting to peer...')
           // Now try to connect to peer
           connectToPeer(userId, undefined, roomId).catch((error) => {
-            console.error('Error connecting to peer:', error)
+            console.error('[Chat Page] Error connecting to peer:', error)
           })
         }
       })
@@ -218,7 +226,7 @@ export default function ChatPage() {
           const channelState = client.getDataChannelState(userId)
           setPeerConnectionState(peerState || null)
           setDataChannelState(channelState || null)
-          
+
           // Log state for debugging
           if (peerState || channelState) {
             console.log(`[Chat Page] Connection state - Peer: ${peerState}, Data Channel: ${channelState}`)
@@ -226,9 +234,16 @@ export default function ChatPage() {
         }
       }, 1000) // Check every second
 
-      return () => clearInterval(checkInterval)
+      return () => {
+        // Clean up handlers and interval
+        unsubscribeRoomJoined?.()
+        clearInterval(checkInterval)
+        // Leave room when unmounting
+        client.leaveRoom(roomId)
+        console.log(`[Chat Page] Left room: ${roomId}`)
+      }
     }
-  }, [isReady, userId, client, connectToPeer])
+  }, [isReady, userId, currentUserId, client, connectToPeer, getRoomId])
 
   const handleSend = useCallback(
     async (messageText: string) => {
