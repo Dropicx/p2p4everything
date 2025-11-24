@@ -526,15 +526,52 @@ server.listen(PORT, () => {
   } else {
     console.log('✅ Clerk authentication enabled')
   }
+
+  if (redis.isReady()) {
+    console.log('✅ Redis connected and ready')
+  } else {
+    console.log('⚠️  Running in local mode (no Redis)')
+  }
 })
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...')
+// Graceful shutdown handler
+async function gracefulShutdown(signal: string) {
+  console.log(`\n${signal} received, starting graceful shutdown...`)
+
+  // Close WebSocket server (stops accepting new connections)
   wss.close(() => {
-    server.close(() => {
-      console.log('Server closed')
-      process.exit(0)
-    })
+    console.log('✅ WebSocket server closed')
   })
-})
+
+  // Notify and close all active WebSocket connections
+  let closedCount = 0
+  connections.forEach((connInfo, connId) => {
+    try {
+      connInfo.ws.close(1001, 'Server shutting down')
+      closedCount++
+    } catch (error) {
+      // Connection might already be closed
+    }
+  })
+  console.log(`✅ Closed ${closedCount} WebSocket connections`)
+
+  // Close HTTP server
+  server.close(() => {
+    console.log('✅ HTTP server closed')
+  })
+
+  // Close Redis connections
+  try {
+    await redis.close()
+    console.log('✅ Redis connections closed')
+  } catch (error) {
+    console.error('Error closing Redis:', error)
+  }
+
+  console.log('✅ Graceful shutdown complete')
+  process.exit(0)
+}
+
+// Handle shutdown signals
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown('SIGINT'))
