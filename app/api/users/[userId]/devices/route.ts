@@ -70,6 +70,14 @@ export async function GET(
       orderBy: { lastSeen: 'desc' },
     })
 
+    // Log for debugging
+    console.log(`[Devices API] Found ${devices.length} devices for user ${targetUser.id}`)
+    devices.forEach((device, index) => {
+      console.log(
+        `[Devices API] Device ${index + 1}: ${device.deviceName} (${device.deviceType}), hasPublicKey: ${!!device.publicKey}, publicKeyLength: ${device.publicKey?.length || 0}`
+      )
+    })
+
     return NextResponse.json(devices)
   } catch (error) {
     console.error('Error fetching user devices:', error)

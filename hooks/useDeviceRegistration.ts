@@ -162,6 +162,7 @@ export function useDeviceRegistration() {
 
         if (!existingDevice) {
           // Register device on server
+          console.log('[Device Registration] Registering new device with public key length:', publicKeyString.length)
           const registerResponse = await fetch('/api/devices/register', {
             method: 'POST',
             headers: {
@@ -176,10 +177,16 @@ export function useDeviceRegistration() {
 
           if (!registerResponse.ok) {
             const error = await registerResponse.json()
+            console.error('[Device Registration] Registration failed:', error)
             throw new Error(error.error || 'Failed to register device')
           }
 
           const registeredDevice = await registerResponse.json()
+          console.log('[Device Registration] Device registered successfully:', {
+            id: registeredDevice.id,
+            hasPublicKey: !!registeredDevice.publicKey,
+            publicKeyLength: registeredDevice.publicKey?.length || 0,
+          })
 
           // Calculate fingerprint for display
           const publicKey = await importPublicKey(publicKeyString)
@@ -197,8 +204,20 @@ export function useDeviceRegistration() {
           })
         } else {
           // Device already registered
+          console.log('[Device Registration] Device already exists:', {
+            id: existingDevice.id,
+            deviceName: existingDevice.deviceName,
+            hasPublicKey: !!existingDevice.publicKey,
+            publicKeyType: typeof existingDevice.publicKey,
+            publicKeyLength: existingDevice.publicKey?.length || 0,
+          })
+          
           // Check if it has a public key, if not, update it
-          if (!existingDevice.publicKey || existingDevice.publicKey.trim() === '') {
+          const needsUpdate = !existingDevice.publicKey || 
+            (typeof existingDevice.publicKey === 'string' && existingDevice.publicKey.trim() === '')
+          
+          if (needsUpdate) {
+            console.log('[Device Registration] Updating existing device with public key')
             // Update device with public key
             try {
               const updateResponse = await fetch(`/api/devices/${existingDevice.id}`, {
@@ -212,11 +231,16 @@ export function useDeviceRegistration() {
               })
 
               if (!updateResponse.ok) {
-                console.warn('Failed to update device public key')
+                const error = await updateResponse.json().catch(() => ({}))
+                console.warn('[Device Registration] Failed to update device public key:', error)
+              } else {
+                console.log('[Device Registration] Successfully updated device public key')
               }
             } catch (updateError) {
-              console.warn('Error updating device public key:', updateError)
+              console.error('[Device Registration] Error updating device public key:', updateError)
             }
+          } else {
+            console.log('[Device Registration] Device already has public key, skipping update')
           }
 
           const publicKey = await importPublicKey(publicKeyString)

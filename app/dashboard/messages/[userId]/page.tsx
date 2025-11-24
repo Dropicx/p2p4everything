@@ -75,17 +75,33 @@ export default function ChatPage() {
 
         // Check recipient device status
         try {
+          console.log(`[Chat Page] Checking recipient device status for userId: ${userId}`)
           const devicesCheckResponse = await fetch(`/api/users/${userId}/devices`)
+          console.log(`[Chat Page] Device status check response: ${devicesCheckResponse.status}`)
+          
           if (devicesCheckResponse.ok) {
             const recipientDevices = await devicesCheckResponse.json()
+            console.log(`[Chat Page] Found ${recipientDevices.length} recipient devices`)
+            
             const hasDevices = recipientDevices.length > 0
-            const hasPublicKey = recipientDevices.some(
-              (d: any) => d.publicKey && d.publicKey.trim()
-            )
+            const hasPublicKey = recipientDevices.some((d: any) => {
+              const hasKey = d.publicKey && (typeof d.publicKey === 'string' ? d.publicKey.trim() : true)
+              console.log(`[Chat Page] Device ${d.id} (${d.deviceName}): hasPublicKey=${hasKey}`)
+              return hasKey
+            })
+            
+            console.log(`[Chat Page] Device status: hasDevices=${hasDevices}, hasPublicKey=${hasPublicKey}`)
             setRecipientDeviceStatus({ hasDevices, hasPublicKey })
+          } else {
+            const errorData = await devicesCheckResponse.json().catch(() => ({}))
+            console.error(`[Chat Page] Failed to check recipient devices:`, errorData)
+            // If it's a connection error, set status accordingly
+            if (devicesCheckResponse.status === 403) {
+              setRecipientDeviceStatus({ hasDevices: false, hasPublicKey: false })
+            }
           }
         } catch (error) {
-          console.warn('Could not check recipient device status:', error)
+          console.error('[Chat Page] Error checking recipient device status:', error)
         }
 
         // Load messages
@@ -198,48 +214,89 @@ export default function ChatPage() {
 
       try {
         // Get recipient's public key
+        console.log(`[Send Message] Fetching devices for recipient userId: ${userId}`)
         const devicesResponse = await fetch(`/api/users/${userId}/devices`)
+        
+        console.log(`[Send Message] Devices API response status: ${devicesResponse.status}`)
+        
         if (!devicesResponse.ok) {
           const errorData = await devicesResponse.json().catch(() => ({}))
+          console.error('[Send Message] Devices API error:', errorData)
           throw new Error(errorData.error || 'Failed to get recipient devices')
         }
 
         const devices = await devicesResponse.json()
-
-        console.log('Recipient devices:', devices)
+        console.log(`[Send Message] Received ${devices.length} devices:`, devices)
+        
+        // Log each device's public key status
+        devices.forEach((device: any, index: number) => {
+          console.log(
+            `[Send Message] Device ${index + 1}: ${device.deviceName} (${device.deviceType}), ` +
+            `hasPublicKey: ${!!device.publicKey}, ` +
+            `publicKeyType: ${typeof device.publicKey}, ` +
+            `publicKeyLength: ${device.publicKey?.length || 0}, ` +
+            `publicKeyPreview: ${device.publicKey ? device.publicKey.substring(0, 50) + '...' : 'null'}`
+          )
+        })
 
         // Find a device with a valid public key
         let recipientPublicKey: CryptoKey | null = null
         let deviceWithKey = null
 
         for (const device of devices) {
-          if (device.publicKey && device.publicKey.trim()) {
-            try {
-              // Try to parse and import the public key
-              // The public key should be a JSON string (JWK format)
-              let publicKeyString = device.publicKey
-              
-              // If it's already a string, try parsing it
-              if (typeof publicKeyString === 'string') {
-                try {
-                  const parsed = JSON.parse(publicKeyString)
-                  if (parsed && parsed.kty) {
-                    // Valid JWK format, use the original string
-                    recipientPublicKey = await importPublicKey(publicKeyString)
-                    deviceWithKey = device
-                    break
-                  }
-                } catch (parseError) {
-                  // Not valid JSON, might be a different format
-                  console.warn('Public key is not valid JSON:', parseError)
-                }
+          if (!device.publicKey) {
+            console.log(`[Send Message] Device ${device.id} (${device.deviceName}) has no publicKey field`)
+            continue
+          }
+
+          try {
+            // Handle both string and object formats
+            let publicKeyString: string
+            
+            if (typeof device.publicKey === 'string') {
+              // It's already a string, check if it's valid JSON
+              const trimmed = device.publicKey.trim()
+              if (!trimmed) {
+                console.log(`[Send Message] Device ${device.id} has empty publicKey string`)
+                continue
               }
-            } catch (importError) {
-              console.warn('Failed to import public key from device:', device.id, importError)
+              
+              try {
+                // Try to parse it to verify it's valid JSON
+                const parsed = JSON.parse(trimmed)
+                if (parsed && parsed.kty && parsed.n) {
+                  // Valid JWK format, use the string
+                  publicKeyString = trimmed
+                } else {
+                  console.warn(`[Send Message] Device ${device.id} publicKey is not valid JWK format`)
+                  continue
+                }
+              } catch (parseError) {
+                console.warn(`[Send Message] Device ${device.id} publicKey is not valid JSON:`, parseError)
+                continue
+              }
+            } else if (typeof device.publicKey === 'object') {
+              // It's already an object, stringify it
+              if (device.publicKey.kty && device.publicKey.n) {
+                publicKeyString = JSON.stringify(device.publicKey)
+              } else {
+                console.warn(`[Send Message] Device ${device.id} publicKey object is not valid JWK format`)
+                continue
+              }
+            } else {
+              console.warn(`[Send Message] Device ${device.id} publicKey has unexpected type: ${typeof device.publicKey}`)
               continue
             }
-          } else {
-            console.log('Device has no public key:', device.id, device.deviceName)
+
+            // Import the public key
+            console.log(`[Send Message] Attempting to import public key from device ${device.id}`)
+            recipientPublicKey = await importPublicKey(publicKeyString)
+            deviceWithKey = device
+            console.log(`[Send Message] Successfully imported public key from device ${device.id} (${device.deviceName})`)
+            break
+          } catch (importError) {
+            console.error(`[Send Message] Failed to import public key from device ${device.id}:`, importError)
+            continue
           }
         }
 
