@@ -115,6 +115,11 @@ export default function ChatPage() {
         }
 
         // Load messages from IndexedDB
+        if (!currentUserId || !userId) {
+          console.warn('[Chat Page] Cannot load messages: missing currentUserId or userId')
+          return
+        }
+
         const conversationId = getConversationId(currentUserId, userId)
         console.log('[Chat Page] Loading messages from IndexedDB for conversation:', conversationId)
 
@@ -184,6 +189,7 @@ export default function ChatPage() {
     }
 
     loadChat()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clerkUserId, userId, router])
 
   // Set up message handler
