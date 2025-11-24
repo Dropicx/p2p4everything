@@ -200,6 +200,14 @@ export default function ChatPage() {
 
   // Connect to peer when ready and monitor connection state
   useEffect(() => {
+    console.log('[Chat Page] Room join useEffect triggered:', {
+      isReady,
+      hasUserId: !!userId,
+      hasCurrentUserId: !!currentUserId,
+      hasClient: !!client,
+      allConditionsMet: !!(isReady && userId && currentUserId && client)
+    })
+
     if (isReady && userId && currentUserId && client) {
       // Use normalized room ID so both users join the same room
       const roomId = getRoomId(currentUserId, userId)
