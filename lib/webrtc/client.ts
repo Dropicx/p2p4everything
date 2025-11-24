@@ -49,6 +49,37 @@ export class WebRTCClient {
         })
       }
     })
+
+    // Handle peer disconnection
+    this.signaling.onMessage('peer-left', (message) => {
+      if (message.type === 'peer-left') {
+        // Find userId by connectionId
+        let userIdToRemove: string | null = null
+        for (const [userId, connId] of this.userToConnectionId.entries()) {
+          if (connId === message.connectionId) {
+            userIdToRemove = userId
+            break
+          }
+        }
+
+        if (userIdToRemove) {
+          console.log(`[WebRTC Client] Peer left: ${userIdToRemove}, cleaning up connection`)
+
+          // Close and remove peer connection
+          const peer = this.peerConnections.get(userIdToRemove)
+          if (peer) {
+            peer.close()
+            this.peerConnections.delete(userIdToRemove)
+          }
+
+          // Remove data channel
+          this.dataChannels.delete(userIdToRemove)
+
+          // Remove from connection mapping
+          this.userToConnectionId.delete(userIdToRemove)
+        }
+      }
+    })
   }
 
   /**
@@ -357,8 +388,18 @@ export class WebRTCClient {
       this.config.onMessage?.(message, userId)
     }
 
-    channel.onerror = (error) => {
-      console.error(`Data channel error for user ${userId}:`, error)
+    channel.onerror = (error: Event) => {
+      // Check if this is a normal closure (user disconnected)
+      const rtcError = error as RTCErrorEvent
+      if (rtcError.error?.message?.includes('User-Initiated Abort')) {
+        console.log(`[WebRTC Client] Data channel closed for user ${userId} (peer disconnected)`)
+      } else {
+        console.error(`Data channel error for user ${userId}:`, error)
+      }
+    }
+
+    channel.onclose = () => {
+      console.log(`Data channel "messages" closed for user ${userId}`)
     }
   }
 
