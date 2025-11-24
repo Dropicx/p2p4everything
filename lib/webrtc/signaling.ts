@@ -46,11 +46,7 @@ export class SignalingClient {
       try {
         // WebSocket doesn't support custom headers, so we'll send token in first message
         const ws = new WebSocket(this.signalingUrl)
-        
-        if (this.deviceId) {
-          // Set device ID header if possible (WebSocket doesn't support custom headers easily)
-          // We'll send it in the first message instead
-        }
+        let authResolved = false
 
         ws.onopen = () => {
           this.ws = ws
@@ -59,18 +55,27 @@ export class SignalingClient {
           this.onConnectionChange?.(true)
 
           // Send authentication and device ID in first message
+          console.log('[Signaling] WebSocket opened, sending authentication...')
           ws.send(JSON.stringify({
             type: 'authenticate',
             token: this.token,
             deviceId: this.deviceId,
           }))
 
-          resolve()
+          // Don't resolve yet - wait for 'connected' message to confirm auth is complete
         }
 
         ws.onmessage = (event) => {
           try {
             const message = JSON.parse(event.data) as SignalingMessage
+
+            // Wait for authentication confirmation before resolving
+            if (message.type === 'connected' && !authResolved) {
+              authResolved = true
+              console.log('[Signaling] Authentication confirmed, connection ready')
+              resolve()
+            }
+
             this.handleMessage(message)
           } catch (error) {
             console.error('Error parsing signaling message:', error)
