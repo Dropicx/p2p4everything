@@ -62,9 +62,12 @@ export default function ChatPage() {
       try {
         // Get current user's database ID
         const currentUserResponse = await fetch('/api/users/me')
+        let currentUserDbId: string | null = null
+
         if (currentUserResponse.ok) {
           const currentUser = await currentUserResponse.json()
-          setCurrentUserId(currentUser.id)
+          currentUserDbId = currentUser.id
+          setCurrentUserId(currentUserDbId)
         }
 
         // Load user info
@@ -88,18 +91,18 @@ export default function ChatPage() {
           console.log(`[Chat Page] Checking recipient device status for userId: ${userId}`)
           const devicesCheckResponse = await fetch(`/api/users/${userId}/devices`)
           console.log(`[Chat Page] Device status check response: ${devicesCheckResponse.status}`)
-          
+
           if (devicesCheckResponse.ok) {
             const recipientDevices = await devicesCheckResponse.json()
             console.log(`[Chat Page] Found ${recipientDevices.length} recipient devices`)
-            
+
             const hasDevices = recipientDevices.length > 0
             const hasPublicKey = recipientDevices.some((d: any) => {
               const hasKey = d.publicKey && (typeof d.publicKey === 'string' ? d.publicKey.trim() : true)
               console.log(`[Chat Page] Device ${d.id} (${d.deviceName}): hasPublicKey=${hasKey}`)
               return hasKey
             })
-            
+
             console.log(`[Chat Page] Device status: hasDevices=${hasDevices}, hasPublicKey=${hasPublicKey}`)
             setRecipientDeviceStatus({ hasDevices, hasPublicKey })
           } else {
@@ -115,12 +118,12 @@ export default function ChatPage() {
         }
 
         // Load messages from IndexedDB
-        if (!currentUserId || !userId) {
-          console.warn('[Chat Page] Cannot load messages: missing currentUserId or userId')
+        if (!currentUserDbId || !userId) {
+          console.warn('[Chat Page] Cannot load messages: missing currentUserDbId or userId')
           return
         }
 
-        const conversationId = getConversationId(currentUserId, userId)
+        const conversationId = getConversationId(currentUserDbId, userId)
         console.log('[Chat Page] Loading messages from IndexedDB for conversation:', conversationId)
 
         const { getMessages } = await import('@/lib/crypto/message-storage')
@@ -159,7 +162,7 @@ export default function ChatPage() {
                 senderId: msg.senderId,
                 receiverId: msg.receiverId,
                 timestamp: new Date(msg.timestamp),
-                senderName: msg.senderId === currentUserId
+                senderName: msg.senderId === currentUserDbId
                   ? 'You'
                   : user?.displayName || user?.username || 'Unknown',
               }
@@ -171,7 +174,7 @@ export default function ChatPage() {
                 senderId: msg.senderId,
                 receiverId: msg.receiverId,
                 timestamp: new Date(msg.timestamp),
-                senderName: msg.senderId === currentUserId
+                senderName: msg.senderId === currentUserDbId
                   ? 'You'
                   : user?.displayName || user?.username || 'Unknown',
               }
