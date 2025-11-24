@@ -2,6 +2,8 @@
 
 This is the WebRTC signaling server for p2p4everything. It handles peer discovery, connection establishment, and message routing for P2P connections.
 
+**Using @clerk/express SDK** - Modern, supported Clerk authentication for Express applications.
+
 ## Railway Deployment
 
 **IMPORTANT:** When deploying this service to Railway, you must configure the service settings:

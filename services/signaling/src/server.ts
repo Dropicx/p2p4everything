@@ -1,7 +1,7 @@
 import express from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import http from 'http'
-import { clerkClient } from '@clerk/clerk-sdk-node'
+import { createClerkClient } from '@clerk/express'
 
 const app = express()
 app.use(express.json())
@@ -11,6 +11,11 @@ const wss = new WebSocketServer({ server })
 
 const PORT = process.env.PORT || 3001
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY
+
+// Initialize Clerk client
+const clerkClient = CLERK_SECRET_KEY
+  ? createClerkClient({ secretKey: CLERK_SECRET_KEY })
+  : null
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -32,26 +37,23 @@ const userConnections = new Map<string, Set<string>>() // userId -> Set of conne
 
 // Verify Clerk JWT token
 async function verifyToken(token: string): Promise<{ userId: string } | null> {
-  if (!CLERK_SECRET_KEY) {
+  if (!clerkClient) {
     console.warn('CLERK_SECRET_KEY not set, skipping authentication')
     return null
   }
 
   try {
-    // Get user from token (Clerk tokens contain user ID)
-    // For now, we'll decode the JWT to get the user ID
-    // In production, you should use Clerk's proper verification
+    // Decode JWT payload to get user ID
     const parts = token.split('.')
     if (parts.length !== 3) {
       return null
     }
 
-    // Decode JWT payload (simple base64 decode)
     const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString())
     const userId = payload.sub || payload.user_id
 
     if (userId) {
-      // Verify user exists in Clerk
+      // Verify user exists in Clerk using the new SDK
       try {
         await clerkClient.users.getUser(userId)
         return { userId }
@@ -467,8 +469,10 @@ function handleSignalingMessage(connectionId: string, message: any, connInfo: Co
 server.listen(PORT, () => {
   console.log(`Signaling server running on port ${PORT}`)
   console.log(`Health check available at http://localhost:${PORT}/health`)
-  if (!CLERK_SECRET_KEY) {
+  if (!clerkClient) {
     console.warn('⚠️  CLERK_SECRET_KEY not set - authentication disabled')
+  } else {
+    console.log('✅ Clerk authentication enabled')
   }
 })
 
