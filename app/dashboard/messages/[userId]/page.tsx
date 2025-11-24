@@ -43,6 +43,8 @@ export default function ChatPage() {
     hasDevices: boolean
     hasPublicKey: boolean
   } | null>(null)
+  const [peerConnectionState, setPeerConnectionState] = useState<string | null>(null)
+  const [dataChannelState, setDataChannelState] = useState<string | null>(null)
   const { client, isReady, sendMessage, onMessage, connectToPeer } = useWebRTC()
 
   useEffect(() => {
@@ -189,7 +191,7 @@ export default function ChatPage() {
     return unsubscribe
   }, [isReady, userId, onMessage, currentUserId, user])
 
-  // Connect to peer when ready
+  // Connect to peer when ready and monitor connection state
   useEffect(() => {
     if (isReady && userId && client) {
       // Use user ID as room ID for P2P connection
@@ -198,10 +200,27 @@ export default function ChatPage() {
         client.joinRoom(roomId)
       }
       
-      // Also try direct connection
+      // Try direct connection
       connectToPeer(userId, undefined, roomId).catch((error) => {
         console.error('Error connecting to peer:', error)
       })
+
+      // Monitor connection state
+      const checkInterval = setInterval(() => {
+        if (client) {
+          const peerState = client.getPeerConnectionState(userId)
+          const channelState = client.getDataChannelState(userId)
+          setPeerConnectionState(peerState || null)
+          setDataChannelState(channelState || null)
+          
+          // Log state for debugging
+          if (peerState || channelState) {
+            console.log(`[Chat Page] Connection state - Peer: ${peerState}, Data Channel: ${channelState}`)
+          }
+        }
+      }, 1000) // Check every second
+
+      return () => clearInterval(checkInterval)
     }
   }, [isReady, userId, client, connectToPeer])
 
@@ -318,6 +337,39 @@ export default function ChatPage() {
           throw new Error(errorMessage)
         }
 
+        // Check if WebRTC connection is ready
+        if (!isReady || !client) {
+          throw new Error(
+            'WebRTC connection is not ready yet. Please wait a moment and try again.'
+          )
+        }
+
+        // Check if peer connection is established
+        const peerConnection = client.getPeerConnection(userId)
+        if (!peerConnection) {
+          throw new Error(
+            'Peer connection not established yet. The connection is being set up. Please wait a moment and try again.'
+          )
+        }
+
+        const connectionState = peerConnection.getConnectionState()
+        if (connectionState !== 'connected' && connectionState !== 'connecting') {
+          throw new Error(
+            `Peer connection is not ready (state: ${connectionState}). ` +
+            `Please wait for the connection to be established and try again.`
+          )
+        }
+
+        // Check if data channel is open
+        const isDataChannelOpen = client.isDataChannelOpen(userId)
+        if (!isDataChannelOpen) {
+          const channelState = client.getDataChannelState(userId)
+          throw new Error(
+            `Data channel is not open yet (state: ${channelState || 'not found'}). ` +
+            `The connection is still being established. Please wait a moment and try again.`
+          )
+        }
+
         // Encrypt message
         const encryptedMessage = await encryptMessage(
           messageText,
@@ -432,6 +484,27 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Connection status indicator */}
+      {isReady && peerConnectionState && (
+        <div className={`border-t border-gray-200 dark:border-gray-700 p-2 ${
+          peerConnectionState === 'connected' && dataChannelState === 'open'
+            ? 'bg-green-50 dark:bg-green-900/20'
+            : 'bg-yellow-50 dark:bg-yellow-900/20'
+        }`}>
+          <p className="text-xs text-center">
+            {peerConnectionState === 'connected' && dataChannelState === 'open' ? (
+              <span className="text-green-600 dark:text-green-400">
+                ✓ Connected and ready to send messages
+              </span>
+            ) : (
+              <span className="text-yellow-600 dark:text-yellow-400">
+                ⏳ Connecting... (Peer: {peerConnectionState}, Channel: {dataChannelState || 'not found'})
+              </span>
+            )}
+          </p>
+        </div>
+      )}
 
       {recipientDeviceStatus && !recipientDeviceStatus.hasPublicKey && (
         <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-yellow-50 dark:bg-yellow-900/20">

@@ -244,8 +244,16 @@ export class WebRTCClient {
    */
   sendMessage(userId: string, message: string): boolean {
     const channel = this.dataChannels.get(userId)
-    if (!channel || channel.readyState !== 'open') {
-      console.warn(`Data channel not open for user ${userId}`)
+    if (!channel) {
+      console.warn(`Data channel not found for user ${userId}. Connection may not be established yet.`)
+      return false
+    }
+
+    if (channel.readyState !== 'open') {
+      console.warn(
+        `Data channel not open for user ${userId}. State: ${channel.readyState}. ` +
+        `Connection may still be establishing. Please wait a moment and try again.`
+      )
       return false
     }
 
@@ -256,6 +264,22 @@ export class WebRTCClient {
       console.error('Error sending message:', error)
       return false
     }
+  }
+
+  /**
+   * Check if data channel is open for a user
+   */
+  isDataChannelOpen(userId: string): boolean {
+    const channel = this.dataChannels.get(userId)
+    return channel?.readyState === 'open'
+  }
+
+  /**
+   * Get data channel state for a user
+   */
+  getDataChannelState(userId: string): RTCDataChannelState | null {
+    const channel = this.dataChannels.get(userId)
+    return channel?.readyState || null
   }
 
   /**
@@ -347,6 +371,24 @@ export class WebRTCClient {
    */
   isSignalingConnected(): boolean {
     return this.signaling.isConnected()
+  }
+
+  /**
+   * Check if peer connection is established for a user
+   */
+  isPeerConnected(userId: string): boolean {
+    const peer = this.peerConnections.get(userId)
+    if (!peer) return false
+    const state = peer.getConnectionState()
+    return state === 'connected'
+  }
+
+  /**
+   * Get peer connection state for a user
+   */
+  getPeerConnectionState(userId: string): RTCPeerConnectionState | null {
+    const peer = this.peerConnections.get(userId)
+    return peer ? peer.getConnectionState() : null
   }
 }
 

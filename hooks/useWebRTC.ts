@@ -94,6 +94,18 @@ export function useWebRTC() {
       return false
     }
 
+    // Check if data channel is open
+    const isOpen = clientRef.current.isDataChannelOpen(userId)
+    if (!isOpen) {
+      const state = clientRef.current.getDataChannelState(userId)
+      console.warn(
+        `Cannot send message: data channel for user ${userId} is not open. ` +
+        `State: ${state || 'not found'}. ` +
+        `The peer connection may still be establishing. Please wait a moment and try again.`
+      )
+      return false
+    }
+
     const success = clientRef.current.sendMessage(userId, message)
     if (success) {
       setConnectedPeers((prev) => new Set(prev).add(userId))
