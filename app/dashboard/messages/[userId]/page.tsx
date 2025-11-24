@@ -147,22 +147,23 @@ export default function ChatPage() {
 
         const keyPair = await importKeyPair(storedKeyPair)
 
-        // Decrypt received messages, use plaintext for sent messages
+        // Decrypt all messages (both sent and received) with private key
         const decryptedMessages = await Promise.all(
           storedMessages.map(async (msg) => {
             try {
               let messageText: string
 
+              // Both sent and received messages are encrypted and need decryption
+              // Sent: encrypted with sender's own public key
+              // Received: encrypted with recipient's public key
+              messageText = await decryptMessage(
+                msg.encryptedContent,
+                keyPair.privateKey
+              )
+
               if (msg.isSent) {
-                // Sent messages are stored as plaintext
-                messageText = msg.encryptedContent
-                console.log('[Chat Page] Loaded sent message (plaintext):', msg.messageId)
+                console.log('[Chat Page] Decrypted sent message:', msg.messageId)
               } else {
-                // Received messages need to be decrypted
-                messageText = await decryptMessage(
-                  msg.encryptedContent,
-                  keyPair.privateKey
-                )
                 console.log('[Chat Page] Decrypted received message:', msg.messageId)
               }
 
@@ -584,29 +585,47 @@ export default function ChatPage() {
           )
         }
 
-        // Encrypt message
+        // Encrypt message for recipient
         const encryptedMessage = await encryptMessage(
           messageText,
           recipientPublicKey
+        )
+
+        // Get sender's own key pair to encrypt for local storage
+        const deviceId = localStorage.getItem('p2p4everything-device-id')
+        if (!deviceId) {
+          throw new Error('No device ID found')
+        }
+
+        const storedKeyPair = await getStoredKeyPair(deviceId)
+        if (!storedKeyPair) {
+          throw new Error('No stored key pair found')
+        }
+
+        const senderKeyPair = await importKeyPair(storedKeyPair)
+
+        // Encrypt message with sender's own public key for local storage
+        const encryptedForStorage = await encryptMessage(
+          messageText,
+          senderKeyPair.publicKey
         )
 
         // Generate message ID
         const messageId = crypto.randomUUID()
         const conversationId = getConversationId(currentUserId, userId)
 
-        // Store plaintext message in IndexedDB (for sent messages, we store plaintext)
-        // We can't decrypt our own messages since they're encrypted with recipient's public key
+        // Store encrypted message in IndexedDB (encrypted with sender's own public key)
         await storeMessage({
           messageId,
           conversationId,
           senderId: currentUserId,
           receiverId: userId,
-          encryptedContent: messageText, // Store plaintext for sent messages
+          encryptedContent: encryptedForStorage, // Store encrypted for defense in depth
           timestamp: Date.now(),
           isSent: true,
         })
 
-        console.log('[Chat Page] Stored outgoing message in IndexedDB:', messageId)
+        console.log('[Chat Page] Stored encrypted outgoing message in IndexedDB:', messageId)
 
         // Try to send via WebRTC first
         const success = sendMessage(userId, encryptedMessage)

@@ -13,7 +13,7 @@ export interface StoredMessage {
   conversationId: string // Indexed for efficient queries
   senderId: string
   receiverId: string
-  encryptedContent: string // For received: encrypted JSON | For sent: plaintext message
+  encryptedContent: string // Encrypted message: sent (encrypted with sender's public key) | received (encrypted with recipient's public key)
   timestamp: number // Unix timestamp in milliseconds
   isSent: boolean // true if sent by this user, false if received
   metadataId?: string // Optional link to server metadata
