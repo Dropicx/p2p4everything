@@ -9,7 +9,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  const { onNotification, isReady } = useWebRTC()
+  const { onNotification, isReady, client } = useWebRTC()
 
   // Run 30-day message cleanup on dashboard load
   useEffect(() => {
@@ -27,7 +27,10 @@ export default function DashboardLayout({
 
   // Listen for message notifications and poll queue
   useEffect(() => {
-    if (!isReady) return
+    if (!isReady || !client) {
+      console.log('[Dashboard] Waiting for WebRTC client to be ready...')
+      return
+    }
 
     console.log('[Dashboard] Setting up message notification listener')
 
@@ -108,7 +111,7 @@ export default function DashboardLayout({
       console.log('[Dashboard] Cleaning up message notification listener')
       unsubscribe()
     }
-  }, [isReady, onNotification])
+  }, [isReady, client, onNotification])
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
