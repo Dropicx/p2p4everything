@@ -56,8 +56,8 @@ export default function DashboardLayout({
           return
         }
 
-        const { getStoredKeyPair } = await import('@/lib/crypto/storage')
-        const storedKeyPair = await getStoredKeyPair(deviceId)
+        const { getKeyPair } = await import('@/lib/crypto/storage')
+        const storedKeyPair = await getKeyPair(deviceId)
         if (!storedKeyPair) {
           console.warn('[Dashboard] No stored key pair found')
           return
