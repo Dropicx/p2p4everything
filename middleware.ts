@@ -10,6 +10,13 @@ const isPublicRoute = createRouteMatcher([
 ])
 
 export default clerkMiddleware(async (auth, request) => {
+  // Allow API routes to handle their own authentication
+  // This prevents redirecting API calls to sign-in page (which returns HTML)
+  if (request.nextUrl.pathname.startsWith('/api/')) {
+    // Let API routes handle authentication themselves
+    return NextResponse.next()
+  }
+
   if (!isPublicRoute(request)) {
     const { userId } = await auth()
     if (!userId) {

@@ -212,7 +212,32 @@ export function useDeviceRegistration() {
         // Check if device is already registered on server
         const devicesResponse = await fetch('/api/devices')
         if (!devicesResponse.ok) {
-          throw new Error('Failed to fetch devices')
+          const contentType = devicesResponse.headers.get('content-type')
+          let errorMessage = 'Failed to fetch devices'
+          
+          if (contentType && contentType.includes('application/json')) {
+            try {
+              const error = await devicesResponse.json()
+              errorMessage = error.error || errorMessage
+            } catch (parseError) {
+              errorMessage = `Server error (${devicesResponse.status}): ${devicesResponse.statusText}`
+            }
+          } else {
+            errorMessage = `Server error (${devicesResponse.status}): ${devicesResponse.statusText}. The API endpoint may not be available.`
+          }
+          
+          throw new Error(errorMessage)
+        }
+
+        // Check if response is JSON
+        const contentType = devicesResponse.headers.get('content-type')
+        if (!contentType || !contentType.includes('application/json')) {
+          const text = await devicesResponse.text()
+          console.error('[Device Registration] Server returned non-JSON response for /api/devices:', {
+            contentType,
+            preview: text.substring(0, 200),
+          })
+          throw new Error('Server returned invalid response format when fetching devices')
         }
 
         const devices = await devicesResponse.json()
@@ -240,9 +265,42 @@ export function useDeviceRegistration() {
           })
 
           if (!registerResponse.ok) {
-            const error = await registerResponse.json()
-            console.error('[Device Registration] Registration failed:', error)
-            throw new Error(error.error || 'Failed to register device')
+            // Check if response is JSON
+            const contentType = registerResponse.headers.get('content-type')
+            let errorMessage = 'Failed to register device'
+            
+            if (contentType && contentType.includes('application/json')) {
+              try {
+                const error = await registerResponse.json()
+                errorMessage = error.error || errorMessage
+              } catch (parseError) {
+                console.error('[Device Registration] Failed to parse error response:', parseError)
+                errorMessage = `Server error (${registerResponse.status}): ${registerResponse.statusText}`
+              }
+            } else {
+              // Response is HTML (error page)
+              const text = await registerResponse.text()
+              console.error('[Device Registration] Server returned HTML instead of JSON:', {
+                status: registerResponse.status,
+                statusText: registerResponse.statusText,
+                preview: text.substring(0, 200),
+              })
+              errorMessage = `Server error (${registerResponse.status}): ${registerResponse.statusText}. The API endpoint may not be available.`
+            }
+            
+            console.error('[Device Registration] Registration failed:', errorMessage)
+            throw new Error(errorMessage)
+          }
+
+          // Check if response is JSON before parsing
+          const contentType = registerResponse.headers.get('content-type')
+          if (!contentType || !contentType.includes('application/json')) {
+            const text = await registerResponse.text()
+            console.error('[Device Registration] Server returned non-JSON response:', {
+              contentType,
+              preview: text.substring(0, 200),
+            })
+            throw new Error('Server returned invalid response format')
           }
 
           const registeredDevice = await registerResponse.json()
@@ -295,8 +353,21 @@ export function useDeviceRegistration() {
               })
 
               if (!updateResponse.ok) {
-                const error = await updateResponse.json().catch(() => ({}))
-                console.warn('[Device Registration] Failed to update device public key:', error)
+                const contentType = updateResponse.headers.get('content-type')
+                let errorMessage = 'Failed to update device public key'
+                
+                if (contentType && contentType.includes('application/json')) {
+                  try {
+                    const error = await updateResponse.json()
+                    errorMessage = error.error || errorMessage
+                  } catch (parseError) {
+                    errorMessage = `Server error (${updateResponse.status}): ${updateResponse.statusText}`
+                  }
+                } else {
+                  errorMessage = `Server error (${updateResponse.status}): ${updateResponse.statusText}`
+                }
+                
+                console.warn('[Device Registration] Failed to update device public key:', errorMessage)
               } else {
                 console.log('[Device Registration] Successfully updated device public key')
               }
