@@ -17,7 +17,7 @@ export interface WebRTCClientConfig {
 }
 
 export class WebRTCClient {
-  private signaling: SignalingClient
+  public signaling: SignalingClient // Make public so hooks can access it
   private peerConnections: Map<string, PeerConnection> = new Map()
   private dataChannels: Map<string, RTCDataChannel> = new Map()
   private userToConnectionId: Map<string, string> = new Map() // userId -> connectionId
@@ -303,9 +303,11 @@ export class WebRTCClient {
     this.signaling.onMessage('offer', (message) => {
       if (message.type === 'offer') {
         const offer = JSON.parse(message.sdp) as RTCSessionDescriptionInit
+        // Extract userId from message if available, otherwise use connectionId
+        const userId = (message as any).fromUserId || message.fromConnectionId || ''
         this.handleOffer(
           offer,
-          message.fromConnectionId || '',
+          userId,
           message.fromConnectionId,
           message.roomId
         ).catch((error) => {

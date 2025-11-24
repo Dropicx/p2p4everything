@@ -6,6 +6,7 @@
 export interface PeerConnectionConfig {
   iceServers?: RTCConfiguration['iceServers']
   onDataChannel?: (channel: RTCDataChannel) => void
+  onDataChannelStateChange?: (channel: RTCDataChannel, state: RTCDataChannelState) => void
   onIceCandidate?: (candidate: RTCIceCandidate) => void
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void
   onIceConnectionStateChange?: (state: RTCIceConnectionState) => void
@@ -77,11 +78,17 @@ export class PeerConnection {
   private setupDataChannel(channel: RTCDataChannel): void {
     channel.onopen = () => {
       console.log(`Data channel "${channel.label}" opened`)
+      if (this.config.onDataChannelStateChange) {
+        this.config.onDataChannelStateChange(channel, 'open')
+      }
     }
 
     channel.onclose = () => {
       console.log(`Data channel "${channel.label}" closed`)
       this.dataChannels.delete(channel.label)
+      if (this.config.onDataChannelStateChange) {
+        this.config.onDataChannelStateChange(channel, 'closed')
+      }
     }
 
     channel.onerror = (error) => {

@@ -196,14 +196,20 @@ export default function ChatPage() {
     if (isReady && userId && client) {
       // Use user ID as room ID for P2P connection
       const roomId = `user-${userId}`
-      if (client) {
-        client.joinRoom(roomId)
-      }
-      
-      // Try direct connection
-      connectToPeer(userId, undefined, roomId).catch((error) => {
-        console.error('Error connecting to peer:', error)
+
+      // Set up room-joined handler to wait for confirmation before connecting
+      const unsubscribeRoomJoined = client.signaling?.onMessage('room-joined', (message) => {
+        if (message.type === 'room-joined' && message.roomId === roomId) {
+          console.log('Room joined confirmed, connecting to peer...')
+          // Now try to connect to peer
+          connectToPeer(userId, undefined, roomId).catch((error) => {
+            console.error('Error connecting to peer:', error)
+          })
+        }
       })
+
+      // Join room - connection will happen in room-joined handler
+      client.joinRoom(roomId)
 
       // Monitor connection state
       const checkInterval = setInterval(() => {

@@ -386,13 +386,27 @@ function handleGetPeers(connectionId: string, roomId: string, ws: WebSocket) {
 
 // Signaling message forwarding
 function handleSignalingMessage(connectionId: string, message: any, connInfo: ConnectionInfo | undefined) {
+  // Ensure user is authenticated before allowing signaling
+  if (!connInfo?.userId) {
+    const senderConn = connections.get(connectionId)
+    if (senderConn) {
+      senderConn.ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Must be authenticated to send signaling messages. Please send authenticate message first.',
+        originalType: message.type,
+      }))
+    }
+    console.warn(`Signaling message rejected from unauthenticated connection: ${connectionId}`)
+    return
+  }
+
   const { targetConnectionId, roomId, targetUserId } = message
 
   const messagePayload = {
     ...message,
     fromConnectionId: connectionId,
-    fromUserId: connInfo?.userId,
-    fromDeviceId: connInfo?.deviceId,
+    fromUserId: connInfo.userId,
+    fromDeviceId: connInfo.deviceId,
   }
 
   if (targetConnectionId) {

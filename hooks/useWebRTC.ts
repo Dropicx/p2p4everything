@@ -3,15 +3,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/nextjs'
 import { WebRTCClient } from '@/lib/webrtc/client'
-import { useSignaling } from './useSignaling'
 
 const SIGNALING_URL =
   process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'ws://localhost:3001'
 
 export function useWebRTC() {
   const { getToken } = useAuth()
-  const { signaling, isConnected: isSignalingConnected } = useSignaling()
   const [isReady, setIsReady] = useState(false)
+  const [isSignalingConnected, setIsSignalingConnected] = useState(false)
   const [connectedPeers, setConnectedPeers] = useState<Set<string>>(new Set())
   const clientRef = useRef<WebRTCClient | null>(null)
   const messageHandlersRef = useRef<Map<string, (message: string) => void>>(
@@ -19,10 +18,6 @@ export function useWebRTC() {
   )
 
   useEffect(() => {
-    if (!isSignalingConnected) {
-      return
-    }
-
     async function initClient() {
       try {
         const token = await getToken()
@@ -41,6 +36,7 @@ export function useWebRTC() {
             }
           },
           onConnectionChange: (connected) => {
+            setIsSignalingConnected(connected)
             setIsReady(connected)
           },
           onPeerConnectionChange: (state) => {
@@ -51,6 +47,7 @@ export function useWebRTC() {
 
         await client.connect()
         clientRef.current = client
+        setIsSignalingConnected(true)
         setIsReady(true)
       } catch (error) {
         console.error('Error initializing WebRTC client:', error)
@@ -66,8 +63,9 @@ export function useWebRTC() {
         clientRef.current = null
       }
       setIsReady(false)
+      setIsSignalingConnected(false)
     }
-  }, [isSignalingConnected, getToken])
+  }, [getToken])
 
   const connectToPeer = useCallback(
     async (userId: string, connectionId?: string, roomId?: string) => {
