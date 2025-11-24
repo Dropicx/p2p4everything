@@ -25,6 +25,11 @@ CLERK_SECRET_KEY=sk_... (from Clerk dashboard)
 NODE_ENV=production
 ```
 
+Railway automatically provides these (no need to set):
+- `RAILWAY_PUBLIC_DOMAIN` - Your service's public domain (e.g., p2p4everything-signal-prod.up.railway.app)
+- `RAILWAY_STATIC_URL` - Alternative URL format
+- The server automatically detects these and shows the correct URLs in logs
+
 ## Local Development
 
 ```bash

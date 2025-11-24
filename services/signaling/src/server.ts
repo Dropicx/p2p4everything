@@ -467,8 +467,23 @@ function handleSignalingMessage(connectionId: string, message: any, connInfo: Co
 
 // Start server
 server.listen(PORT, () => {
-  console.log(`Signaling server running on port ${PORT}`)
-  console.log(`Health check available at http://localhost:${PORT}/health`)
+  // Determine the base URL based on environment
+  const RAILWAY_PUBLIC_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN
+  const RAILWAY_STATIC_URL = process.env.RAILWAY_STATIC_URL
+
+  let baseUrl: string
+  if (RAILWAY_PUBLIC_DOMAIN) {
+    baseUrl = `https://${RAILWAY_PUBLIC_DOMAIN}`
+  } else if (RAILWAY_STATIC_URL) {
+    baseUrl = RAILWAY_STATIC_URL
+  } else {
+    baseUrl = `http://localhost:${PORT}`
+  }
+
+  console.log(`🚀 Signaling server running on port ${PORT}`)
+  console.log(`📡 Health check: ${baseUrl}/health`)
+  console.log(`🔌 WebSocket endpoint: ${baseUrl.replace('https://', 'wss://').replace('http://', 'ws://')}`)
+
   if (!clerkClient) {
     console.warn('⚠️  CLERK_SECRET_KEY not set - authentication disabled')
   } else {
