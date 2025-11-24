@@ -283,6 +283,9 @@ export default function ChatPage() {
 
         const keyPair = await importKeyPair(storedKeyPair)
 
+        // Capture currentUserId to satisfy TypeScript
+        if (!currentUserId) return
+
         // Process each queued message
         for (const msg of queuedMessages) {
           try {
