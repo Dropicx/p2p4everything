@@ -2,6 +2,7 @@ import express from 'express'
 import { WebSocketServer, WebSocket } from 'ws'
 import http from 'http'
 import { createClerkClient } from '@clerk/express'
+import { RedisManager } from './redis'
 
 const app = express()
 app.use(express.json())
@@ -11,11 +12,15 @@ const wss = new WebSocketServer({ server })
 
 const PORT = process.env.PORT || 3001
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY
+const REDIS_URL = process.env.REDIS_URL
 
 // Initialize Clerk client
 const clerkClient = CLERK_SECRET_KEY
   ? createClerkClient({ secretKey: CLERK_SECRET_KEY })
   : null
+
+// Initialize Redis (with graceful fallback)
+const redis = new RedisManager(REDIS_URL)
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -250,7 +255,10 @@ function handleMessage(connectionId: string, message: any, ws: WebSocket) {
       ws.send(JSON.stringify({ type: 'pong' }))
       break
     case 'join-room':
-      handleJoinRoom(connectionId, message.roomId, ws, connInfo)
+      console.log(`[Message] Received join-room from ${connectionId}: roomId=${message.roomId}`)
+      handleJoinRoom(connectionId, message.roomId, ws, connInfo).catch(error => {
+        console.error(`[Message] Error in handleJoinRoom:`, error)
+      })
       break
     case 'leave-room':
       handleLeaveRoom(connectionId, message.roomId)
@@ -273,7 +281,7 @@ function handleMessage(connectionId: string, message: any, ws: WebSocket) {
 }
 
 // Room management
-function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocket, connInfo: ConnectionInfo | undefined) {
+async function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocket, connInfo: ConnectionInfo | undefined) {
   if (!roomId) {
     ws.send(JSON.stringify({
       type: 'error',
@@ -282,16 +290,25 @@ function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocket, con
     return
   }
 
+  console.log(`[Room Join] Connection ${connectionId}${connInfo?.userId ? ` (user: ${connInfo.userId})` : ''} joining room ${roomId}`)
+
+  // Add to in-memory room
   if (!rooms.has(roomId)) {
     rooms.set(roomId, new Set())
   }
-  
+
   const roomConnections = rooms.get(roomId)!
   const wasInRoom = roomConnections.has(connectionId)
   roomConnections.add(connectionId)
-  
+
+  // Also add to Redis if available
+  if (redis.isReady()) {
+    await redis.addToRoom(roomId, connectionId)
+    console.log(`[Room Join] Added ${connectionId} to Redis room ${roomId}`)
+  }
+
   if (!wasInRoom) {
-    console.log(`Connection ${connectionId}${connInfo?.userId ? ` (user: ${connInfo.userId})` : ''} joined room ${roomId}`)
+    console.log(`[Room Join] Connection ${connectionId} successfully joined room ${roomId}`)
   }
 
   // Notify other connections in the room
@@ -305,24 +322,30 @@ function handleJoinRoom(connectionId: string, roomId: string, ws: WebSocket, con
           userId: peerConn.userId,
           deviceId: peerConn.deviceId,
         })
-        
+
         // Notify peer about new connection
-        peerConn.ws.send(JSON.stringify({
+        const peerJoinedMsg = {
           type: 'peer-joined',
           connectionId,
           roomId,
           userId: connInfo?.userId,
           deviceId: connInfo?.deviceId,
-        }))
+        }
+        console.log(`[Room Join] Notifying peer ${connId} about new connection ${connectionId}`)
+        peerConn.ws.send(JSON.stringify(peerJoinedMsg))
       }
     }
   })
 
-  ws.send(JSON.stringify({
+  const roomJoinedMessage = {
     type: 'room-joined',
     roomId,
     peers,
-  }))
+  }
+  console.log(`[Room Join] Sending room-joined to ${connectionId}: roomId=${roomId}, peers=${peers.length}`)
+  console.log(`[Room Join] Room-joined message:`, JSON.stringify(roomJoinedMessage))
+  ws.send(JSON.stringify(roomJoinedMessage))
+  console.log(`[Room Join] room-joined message sent successfully`)
 }
 
 function handleLeaveRoom(connectionId: string, roomId: string) {

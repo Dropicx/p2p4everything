@@ -134,6 +134,7 @@ export class SignalingClient {
    * Join a room
    */
   joinRoom(roomId: string): void {
+    console.log(`[Signaling] Sending join-room for roomId: ${roomId}`)
     this.send({
       type: 'join-room',
       roomId,
@@ -226,14 +227,18 @@ export class SignalingClient {
    * Handle incoming messages
    */
   private handleMessage(message: SignalingMessage): void {
+    console.log(`[Signaling] Received message:`, message.type, message)
+
     // Handle connection confirmation
     if (message.type === 'connected') {
       this.connectionId = message.connectionId
+      console.log(`[Signaling] Connected with connectionId: ${this.connectionId}`)
     }
 
     // Notify all handlers for this message type
     const handlers = this.messageHandlers.get(message.type)
     if (handlers) {
+      console.log(`[Signaling] Found ${handlers.size} handlers for ${message.type}`)
       handlers.forEach((handler) => {
         try {
           handler(message)
@@ -241,6 +246,8 @@ export class SignalingClient {
           console.error('Error in message handler:', error)
         }
       })
+    } else {
+      console.log(`[Signaling] No handlers registered for ${message.type}`)
     }
 
     // Also notify wildcard handlers
