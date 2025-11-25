@@ -176,10 +176,56 @@ export function useDeviceRegistration() {
                 }
 
                 if (!keysMatch) {
-                  // Keys don't match - need to re-register to update server
-                  console.log('[Device Registration] Keys do not match server, need to re-register...')
-                  localStorage.removeItem(DEVICE_REGISTERED_KEY)
-                  // Don't return - fall through to full registration flow
+                  // Keys don't match - we have local keys but server has different keys
+                  // This is a CRITICAL situation: messages encrypted with server's key cannot be decrypted
+                  // because we don't have that private key. We MUST update server with our local key.
+                  console.warn('[Device Registration] KEY MISMATCH DETECTED!')
+                  console.warn('[Device Registration] Local keys exist but server has different public key.')
+                  console.warn('[Device Registration] Old messages encrypted with server key will be unreadable.')
+                  console.warn('[Device Registration] Updating server with local public key to fix future messages.')
+
+                  // Update server with our local public key
+                  try {
+                    const updateResponse = await fetch(`/api/devices/${serverDevice.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ publicKey: localPublicKeyString }),
+                    })
+
+                    if (updateResponse.ok) {
+                      console.log('[Device Registration] Server public key updated successfully')
+
+                      // Store a flag to show user a warning about old messages
+                      localStorage.setItem('p2p4everything-key-regenerated', Date.now().toString())
+
+                      // Migrate device ID if needed
+                      const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
+                      const newDeviceId = serverDevice.id
+                      if (oldDeviceId && oldDeviceId !== newDeviceId) {
+                        const storedKeys = await getKeyPair(oldDeviceId)
+                        if (storedKeys) {
+                          await storeKeyPair(newDeviceId, storedKeys)
+                        }
+                        localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
+                      }
+
+                      const fingerprint = await getKeyFingerprint(localPublicKey)
+                      setState({
+                        deviceId: serverDevice.id,
+                        isRegistered: true,
+                        isRegistering: false,
+                        error: null,
+                        publicKeyFingerprint: fingerprint,
+                      })
+                      return
+                    } else {
+                      console.error('[Device Registration] Failed to update server key, falling through to re-register')
+                      localStorage.removeItem(DEVICE_REGISTERED_KEY)
+                    }
+                  } catch (e) {
+                    console.error('[Device Registration] Error updating server key:', e)
+                    localStorage.removeItem(DEVICE_REGISTERED_KEY)
+                  }
                 } else {
                   // Keys match - proceed with migration if needed
                   // IMPORTANT: Migrate device ID if localStorage has old format
