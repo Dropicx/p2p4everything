@@ -153,7 +153,26 @@ export function useDeviceRegistration() {
               )
 
               if (serverDevice) {
-                // Device exists on server, load state
+                // Device exists on server
+                // IMPORTANT: Migrate device ID if localStorage has old format
+                const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
+                const newDeviceId = serverDevice.id
+
+                if (oldDeviceId && oldDeviceId !== newDeviceId) {
+                  console.log('[Device Registration] Migrating device ID from', oldDeviceId, 'to', newDeviceId)
+
+                  // Migrate the key pair to the new device ID
+                  const storedKeys = await getKeyPair(oldDeviceId)
+                  if (storedKeys) {
+                    await storeKeyPair(newDeviceId, storedKeys)
+                    console.log('[Device Registration] Migrated key pair to new device ID')
+                  }
+
+                  // Update localStorage with the server's device ID
+                  localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
+                }
+
+                // Load state
                 const publicKey = await importPublicKey(storedKeyPair.publicKey)
                 const fingerprint = await getKeyFingerprint(publicKey)
                 setState({
