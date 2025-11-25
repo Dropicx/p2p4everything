@@ -13,7 +13,7 @@ import {
   exportSalt,
   importSalt,
 } from '@/lib/crypto/master-key'
-import { getKeyPair } from '@/lib/crypto/storage'
+import { getKeyPair, storeKeyPair } from '@/lib/crypto/storage'
 import { importKeyPair } from '@/lib/crypto/keys'
 
 export interface EncryptionState {
@@ -193,7 +193,7 @@ export function useEncryption() {
         return false
       }
 
-      const deviceId = localStorage.getItem(DEVICE_ID_KEY)
+      let deviceId = localStorage.getItem(DEVICE_ID_KEY)
       if (!deviceId) {
         setState((prev) => ({ ...prev, error: 'Device not registered' }))
         return false
@@ -202,21 +202,95 @@ export function useEncryption() {
       setState((prev) => ({ ...prev, isLoading: true, error: null }))
 
       try {
-        // Get device's key pair
-        const storedKeyPair = await getKeyPair(deviceId)
-        if (!storedKeyPair) {
-          throw new Error('Device key pair not found')
-        }
-
-        const keyPair = await importKeyPair(storedKeyPair)
-
-        // Derive backup key from user password
+        // Derive backup key from user password FIRST
+        // This validates the password before we do anything else
         const salt = importSalt(pendingData.salt)
         const backupKey = await deriveBackupKey(backupPassword, userId, salt)
 
-        // Decrypt master key from backup
+        // Decrypt master key from backup - this will fail if password is wrong
         console.log('[Encryption] Decrypting master key from backup...')
         const masterKey = await decryptMasterKeyFromBackup(pendingData.encryptedMasterKey, backupKey)
+        console.log('[Encryption] Master key decrypted successfully')
+
+        // Now get or generate device's key pair
+        let storedKeyPair = await getKeyPair(deviceId)
+        let keyPair: CryptoKeyPair
+
+        if (!storedKeyPair) {
+          // New device - generate key pair
+          console.log('[Encryption] No device keys found, generating new key pair...')
+          const { generateKeyPair, exportKeyPair } = await import('@/lib/crypto/keys')
+          keyPair = await generateKeyPair()
+          const exported = await exportKeyPair(keyPair)
+
+          // We need to store unencrypted initially since we don't have storage encryption yet
+          // The migration will encrypt it after we initialize storage
+          await storeKeyPair(deviceId, exported)
+          console.log('[Encryption] Generated and stored new device key pair')
+
+          // Register device on server if not already registered
+          const { exportPublicKey } = await import('@/lib/crypto/keys')
+          const publicKeyString = await exportPublicKey(keyPair.publicKey)
+
+          // Check if device exists on server
+          const devicesResponse = await fetch('/api/devices')
+          if (devicesResponse.ok) {
+            const devices = await devicesResponse.json()
+            const deviceName = localStorage.getItem('p2p4everything-device-name') || 'Web Browser'
+            const userAgent = navigator.userAgent
+            const deviceType = userAgent.includes('Mobile') ? 'mobile' : 'web'
+
+            const existingDevice = devices.find((d: { deviceName: string; deviceType: string }) =>
+              d.deviceName === deviceName && d.deviceType === deviceType
+            )
+
+            if (!existingDevice) {
+              // Register new device
+              console.log('[Encryption] Registering new device on server...')
+              const registerResponse = await fetch('/api/devices/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  deviceName,
+                  deviceType,
+                  publicKey: publicKeyString,
+                }),
+              })
+
+              if (registerResponse.ok) {
+                const registeredDevice = await registerResponse.json()
+                console.log('[Encryption] Device registered:', registeredDevice.id)
+
+                // Migrate keys to new device ID
+                if (registeredDevice.id !== deviceId) {
+                  await storeKeyPair(registeredDevice.id, exported)
+                  localStorage.setItem(DEVICE_ID_KEY, registeredDevice.id)
+                  deviceId = registeredDevice.id
+                }
+              } else {
+                console.warn('[Encryption] Failed to register device, continuing anyway')
+              }
+            } else {
+              // Update existing device with new public key
+              console.log('[Encryption] Updating existing device with new public key...')
+              await fetch(`/api/devices/${existingDevice.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ publicKey: publicKeyString }),
+              })
+
+              // Migrate keys to server device ID
+              if (existingDevice.id !== deviceId) {
+                await storeKeyPair(existingDevice.id, exported)
+                localStorage.setItem(DEVICE_ID_KEY, existingDevice.id)
+                deviceId = existingDevice.id
+              }
+            }
+          }
+        } else {
+          // Existing device keys - import them
+          keyPair = await importKeyPair(storedKeyPair)
+        }
 
         // Encrypt master key for this device
         const encryptedForDevice = await encryptMasterKeyForDevice(
