@@ -76,7 +76,15 @@ function initDB(): Promise<IDBDatabase> {
 
 /**
  * Store a key pair for a device
- * Encrypts data if master key is available
+ *
+ * IMPORTANT: Device RSA key pairs are stored UNENCRYPTED intentionally.
+ * They are needed to bootstrap/decrypt the master key, so they cannot
+ * themselves be encrypted with the master key (chicken-and-egg problem).
+ *
+ * This is acceptable because:
+ * 1. The private key never leaves the device
+ * 2. The private key is useless without the encrypted master key from server
+ * 3. IndexedDB is already sandboxed per-origin
  */
 export async function storeKeyPair(
   deviceId: string,
@@ -90,30 +98,20 @@ export async function storeKeyPair(
     createdAt: Date.now(),
   }
 
-  // Encrypt if master key is available
-  let storedData: StoredKey | string = data
-  const masterKey = getMasterKeyFn?.()
-  if (masterKey) {
-    try {
-      storedData = await encryptData(data, masterKey)
-      console.log(`[KeyStorage] Stored encrypted key pair for device ${deviceId}`)
-    } catch (error) {
-      console.warn('[KeyStorage] Failed to encrypt, storing unencrypted:', error)
-      storedData = data
-    }
-  }
-
+  // Store UNENCRYPTED - device keys must be accessible before master key is loaded
   return new Promise((resolve, reject) => {
     const transaction = database.transaction([STORE_NAME], 'readwrite')
     const store = transaction.objectStore(STORE_NAME)
 
-    // Store with deviceId for lookup
+    // Store with deviceId for lookup - use legacy format for compatibility
     const request = store.put({
       deviceId,
-      data: storedData,
+      keyPair: data.keyPair,
+      createdAt: data.createdAt,
     })
 
     request.onsuccess = () => {
+      console.log(`[KeyStorage] Stored key pair for device ${deviceId}`)
       resolve()
     }
 
@@ -125,7 +123,7 @@ export async function storeKeyPair(
 
 /**
  * Retrieve a key pair for a device
- * Handles both encrypted and unencrypted data
+ * Device RSA keys are always stored unencrypted (needed for master key bootstrap)
  */
 export async function getKeyPair(
   deviceId: string
@@ -145,30 +143,38 @@ export async function getKeyPair(
       }
 
       try {
-        // Check for new format with 'data' field
+        // Check for legacy encrypted format and decrypt if possible
         if (result.data !== undefined) {
-          // Encrypted format
           if (isEncrypted(result.data)) {
+            // Old encrypted format - try to decrypt and re-save as unencrypted
             const masterKey = getMasterKeyFn?.()
             if (!masterKey) {
-              // Can't decrypt without master key - this is expected during bootstrap
               console.log('[KeyStorage] Cannot decrypt key pair - master key not available (bootstrap mode)')
               resolve(null)
               return
             }
             const decrypted = await decryptData<StoredKey>(result.data, masterKey)
+
+            // Re-save as unencrypted for future access
+            console.log('[KeyStorage] Migrating encrypted key to unencrypted format...')
+            const writeTransaction = database.transaction([STORE_NAME], 'readwrite')
+            const writeStore = writeTransaction.objectStore(STORE_NAME)
+            writeStore.put({
+              deviceId,
+              keyPair: decrypted.keyPair,
+              createdAt: decrypted.createdAt || Date.now(),
+            })
+
             resolve(decrypted.keyPair)
           } else if (isUnencrypted(result.data)) {
-            // Unencrypted object in data field
             resolve((result.data as StoredKey).keyPair)
           } else if (typeof result.data === 'object' && result.data.keyPair) {
-            // Direct object in data field
             resolve(result.data.keyPair)
           } else {
             resolve(null)
           }
         } else if (result.keyPair) {
-          // Legacy format - direct keyPair field
+          // Standard unencrypted format - direct keyPair field
           resolve(result.keyPair)
         } else {
           resolve(null)
@@ -276,25 +282,27 @@ export async function clearAllKeys(): Promise<void> {
 }
 
 /**
- * Migrate unencrypted keys to encrypted format
- * Should be called once master key is available
+ * Migrate encrypted keys back to unencrypted format
  *
- * Note: We collect items first, then migrate in separate transactions
- * to avoid IndexedDB transaction timeout issues with async operations
+ * Device RSA keys should NOT be encrypted because they're needed to
+ * bootstrap the master key. This function converts any previously
+ * encrypted keys back to unencrypted format.
  */
 export async function migrateKeysToEncrypted(): Promise<number> {
+  // This function now does the OPPOSITE - it decrypts any encrypted keys
+  // because device RSA keys should not be encrypted (needed for bootstrap)
   const masterKey = getMasterKeyFn?.()
   if (!masterKey) {
-    console.log('[KeyStorage] Cannot migrate - master key not available')
+    console.log('[KeyStorage] Skipping key migration - master key not available')
     return 0
   }
 
   const database = await initDB()
 
-  // Step 1: Collect all items that need migration (synchronously)
+  // Collect encrypted items
   interface MigrationItem {
     deviceId: string
-    keyPairData: StoredKey
+    encryptedData: string
   }
   const itemsToMigrate: MigrationItem[] = []
 
@@ -309,26 +317,11 @@ export async function migrateKeysToEncrypted(): Promise<number> {
       if (cursor) {
         const item = cursor.value
 
-        // Check if needs migration
-        const needsMigration =
-          // Legacy format with direct keyPair
-          (item.keyPair && !item.data) ||
-          // New format but not encrypted
-          (item.data && !isEncrypted(item.data))
-
-        if (needsMigration) {
-          // Extract the key pair data for migration
-          const keyPairData: StoredKey = item.keyPair
-            ? {
-                deviceId: item.deviceId,
-                keyPair: item.keyPair,
-                createdAt: item.createdAt || Date.now(),
-              }
-            : (item.data as StoredKey)
-
+        // Check if encrypted (needs to be decrypted)
+        if (item.data !== undefined && isEncrypted(item.data)) {
           itemsToMigrate.push({
             deviceId: item.deviceId,
-            keyPairData,
+            encryptedData: item.data,
           })
         }
 
@@ -344,44 +337,44 @@ export async function migrateKeysToEncrypted(): Promise<number> {
   })
 
   if (itemsToMigrate.length === 0) {
-    console.log('[KeyStorage] No keys need migration')
+    console.log('[KeyStorage] No encrypted keys to migrate')
     return 0
   }
 
-  console.log(`[KeyStorage] Found ${itemsToMigrate.length} keys to migrate`)
+  console.log(`[KeyStorage] Found ${itemsToMigrate.length} encrypted keys to decrypt`)
 
-  // Step 2: Migrate each item in its own transaction
+  // Decrypt and re-save as unencrypted
   let migratedCount = 0
   for (const item of itemsToMigrate) {
     try {
-      // Encrypt the data (async operation outside of transaction)
-      const encrypted = await encryptData(item.keyPairData, masterKey)
+      const decrypted = await decryptData<StoredKey>(item.encryptedData, masterKey)
 
-      // Write in a new transaction
       await new Promise<void>((resolve, reject) => {
         const transaction = database.transaction([STORE_NAME], 'readwrite')
         const store = transaction.objectStore(STORE_NAME)
 
+        // Save in unencrypted format
         const request = store.put({
           deviceId: item.deviceId,
-          data: encrypted,
+          keyPair: decrypted.keyPair,
+          createdAt: decrypted.createdAt || Date.now(),
         })
 
         request.onsuccess = () => {
           migratedCount++
-          console.log(`[KeyStorage] Migrated key for device ${item.deviceId}`)
+          console.log(`[KeyStorage] Decrypted key for device ${item.deviceId}`)
           resolve()
         }
 
         request.onerror = () => {
-          reject(new Error(`Failed to update key for device ${item.deviceId}`))
+          reject(new Error(`Failed to decrypt key for device ${item.deviceId}`))
         }
       })
     } catch (error) {
-      console.error(`[KeyStorage] Failed to migrate key for device ${item.deviceId}:`, error)
+      console.error(`[KeyStorage] Failed to decrypt key for device ${item.deviceId}:`, error)
     }
   }
 
-  console.log(`[KeyStorage] Migration complete: ${migratedCount} keys migrated`)
+  console.log(`[KeyStorage] Migration complete: ${migratedCount} keys decrypted`)
   return migratedCount
 }
