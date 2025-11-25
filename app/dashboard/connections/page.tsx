@@ -126,8 +126,18 @@ export default function ConnectionsPage() {
 
       const newConnection = await response.json()
 
+      // Format the connection to match the expected structure
+      const formattedConnection = {
+        id: newConnection.id,
+        status: newConnection.status,
+        otherUser: newConnection.userB, // We're always userA (initiator), so other user is userB
+        isInitiator: true,
+        createdAt: newConnection.createdAt,
+        updatedAt: newConnection.updatedAt,
+      }
+
       // Optimistic update: add to list immediately
-      setConnections(prev => [newConnection, ...prev])
+      setConnections(prev => [formattedConnection, ...prev])
       setSelectedUser(null)
 
       console.log('[Connections] Connection request sent successfully')

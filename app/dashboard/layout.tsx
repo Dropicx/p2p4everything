@@ -89,6 +89,9 @@ export default function DashboardLayout({
           message: 'Click to view',
           type: 'info',
           duration: 5000,
+          onClick: () => {
+            router.push(`/dashboard/messages/${senderId}`)
+          },
         })
 
         // Show browser notification

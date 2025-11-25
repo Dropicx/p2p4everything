@@ -8,6 +8,7 @@ export interface Toast {
   message?: string
   type?: 'success' | 'error' | 'info'
   duration?: number
+  onClick?: () => void
 }
 
 interface ToastProps {
@@ -32,7 +33,10 @@ function ToastItem({ toast, onRemove }: ToastProps) {
 
   return (
     <div
-      className={`${bgColor} text-white px-4 py-3 rounded-lg shadow-lg mb-2 animate-slide-in max-w-sm`}
+      onClick={toast.onClick}
+      className={`${bgColor} text-white px-4 py-3 rounded-lg shadow-lg mb-2 animate-slide-in max-w-sm ${
+        toast.onClick ? 'cursor-pointer hover:opacity-90 transition-opacity' : ''
+      }`}
     >
       <div className="flex items-start justify-between">
         <div className="flex-1">
@@ -42,7 +46,10 @@ function ToastItem({ toast, onRemove }: ToastProps) {
           )}
         </div>
         <button
-          onClick={() => onRemove(toast.id)}
+          onClick={(e) => {
+            e.stopPropagation() // Prevent triggering toast onClick
+            onRemove(toast.id)
+          }}
           className="ml-3 text-white opacity-70 hover:opacity-100"
         >
           ✕
