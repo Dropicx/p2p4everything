@@ -269,3 +269,4 @@ iceServers: [
 
 **Bottom line:** The encryption and key handling are compatible, but WebRTC connectivity is the main issue, especially for mobile networks. Adding a TURN server would solve most mobile connectivity problems.
 
+

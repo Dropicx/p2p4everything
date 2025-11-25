@@ -176,6 +176,53 @@ export async function encryptHybrid(
 }
 
 /**
+ * Multi-device hybrid encryption: Encrypt the symmetric key for multiple devices
+ * This allows any of the recipient's devices to decrypt the message
+ */
+export async function encryptHybridMultiDevice(
+  data: string,
+  deviceKeys: Array<{ deviceId: string; publicKey: CryptoKey }>
+): Promise<{ encryptedKeys: Array<{ deviceId: string; encryptedKey: string }>; encryptedData: string; iv: string }> {
+  console.log(`[EncryptMultiDevice] Encrypting for ${deviceKeys.length} devices`)
+
+  // Generate a symmetric key for this message
+  const sessionKey = await generateSymmetricKey()
+
+  // Encrypt the data with the symmetric key
+  const { encrypted, iv } = await encryptSymmetric(data, sessionKey)
+
+  // Export the symmetric key once
+  const exportedKey = await crypto.subtle.exportKey('raw', sessionKey)
+  const keyString = arrayBufferToBase64(exportedKey)
+
+  // Encrypt the symmetric key for each device's public key
+  const encryptedKeys: Array<{ deviceId: string; encryptedKey: string }> = []
+
+  for (const { deviceId, publicKey } of deviceKeys) {
+    try {
+      const encryptedKey = await encryptAsymmetric(keyString, publicKey)
+      encryptedKeys.push({ deviceId, encryptedKey })
+      console.log(`[EncryptMultiDevice] Encrypted key for device ${deviceId}`)
+    } catch (error) {
+      console.error(`[EncryptMultiDevice] Failed to encrypt for device ${deviceId}:`, error)
+      // Continue with other devices
+    }
+  }
+
+  if (encryptedKeys.length === 0) {
+    throw new Error('Failed to encrypt for any device')
+  }
+
+  console.log(`[EncryptMultiDevice] Successfully encrypted for ${encryptedKeys.length} devices`)
+
+  return {
+    encryptedKeys,
+    encryptedData: encrypted,
+    iv,
+  }
+}
+
+/**
  * Hybrid decryption: Decrypt the symmetric key with RSA, then decrypt the data with AES
  */
 export async function decryptHybrid(
@@ -233,15 +280,74 @@ export async function encryptMessage(
 }
 
 /**
+ * Encrypt a message for multiple recipient devices (uses multi-device hybrid encryption)
+ * Each device will receive the message encrypted with their own public key
+ */
+export async function encryptMessageMultiDevice(
+  message: string,
+  deviceKeys: Array<{ deviceId: string; publicKey: CryptoKey }>
+): Promise<string> {
+  const result = await encryptHybridMultiDevice(message, deviceKeys)
+  return JSON.stringify(result)
+}
+
+/**
  * Decrypt a message from a sender
+ * Supports both single-device format (encryptedKey) and multi-device format (encryptedKeys array)
  */
 export async function decryptMessage(
   encryptedMessage: string,
-  recipientPrivateKey: CryptoKey
+  recipientPrivateKey: CryptoKey,
+  deviceId?: string
 ): Promise<string> {
   try {
     console.log('[Decrypt] Starting decryption, encrypted message length:', encryptedMessage.length)
     const parsed = JSON.parse(encryptedMessage)
+
+    // Check if this is multi-device format (has encryptedKeys array)
+    if (parsed.encryptedKeys && Array.isArray(parsed.encryptedKeys)) {
+      console.log('[Decrypt] Multi-device format detected, encryptedKeys count:', parsed.encryptedKeys.length)
+      console.log('[Decrypt] Device IDs in message:', parsed.encryptedKeys.map((k: { deviceId: string }) => k.deviceId))
+      console.log('[Decrypt] Current device ID:', deviceId || 'not provided')
+
+      // Try to find the encrypted key for the current device
+      let encryptedKeyForDevice: string | null = null
+
+      // First try to find by device ID if provided
+      if (deviceId) {
+        const deviceEntry = parsed.encryptedKeys.find((k: { deviceId: string }) => k.deviceId === deviceId)
+        if (deviceEntry) {
+          encryptedKeyForDevice = deviceEntry.encryptedKey
+          console.log('[Decrypt] Found encrypted key for device ID:', deviceId)
+        }
+      }
+
+      // If not found by device ID, try each encrypted key until one works
+      if (!encryptedKeyForDevice) {
+        console.log('[Decrypt] Device ID not found or not provided, trying all encrypted keys...')
+
+        for (const entry of parsed.encryptedKeys) {
+          try {
+            console.log('[Decrypt] Trying encrypted key for device:', entry.deviceId)
+            const result = await decryptHybrid(entry.encryptedKey, parsed.encryptedData, parsed.iv, recipientPrivateKey)
+            console.log('[Decrypt] Successfully decrypted with device:', entry.deviceId)
+            return result
+          } catch {
+            console.log('[Decrypt] Failed to decrypt with device:', entry.deviceId, '- trying next...')
+            continue
+          }
+        }
+
+        throw new Error('Failed to decrypt: no matching device key found')
+      }
+
+      const result = await decryptHybrid(encryptedKeyForDevice, parsed.encryptedData, parsed.iv, recipientPrivateKey)
+      console.log('[Decrypt] Decryption successful, result length:', result.length)
+      return result
+    }
+
+    // Legacy single-device format
+    console.log('[Decrypt] Single-device format detected (legacy)')
     console.log('[Decrypt] Parsed message:', {
       hasEncryptedKey: !!parsed.encryptedKey,
       hasEncryptedData: !!parsed.encryptedData,

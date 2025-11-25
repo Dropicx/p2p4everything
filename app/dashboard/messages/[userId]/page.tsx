@@ -7,7 +7,7 @@ import { MessageList } from '@/components/messages/message-list'
 import { MessageInput } from '@/components/messages/message-input'
 import { DeviceRegistration } from '@/components/dashboard/device-registration'
 import { useWebRTC } from '@/hooks/useWebRTC'
-import { encryptMessage, decryptMessage } from '@/lib/crypto/encryption'
+import { encryptMessage, encryptMessageMultiDevice, decryptMessage } from '@/lib/crypto/encryption'
 import { importPublicKey, importKeyPair } from '@/lib/crypto/keys'
 import { getKeyPair as getStoredKeyPair } from '@/lib/crypto/storage'
 import { storeMessage, getConversationId, clearConversation } from '@/lib/crypto/message-storage'
@@ -180,7 +180,8 @@ export default function ChatPage() {
               // Received: encrypted with recipient's public key
               messageText = await decryptMessage(
                 msg.encryptedContent,
-                keyPair.privateKey
+                keyPair.privateKey,
+                deviceId  // Pass device ID for multi-device decryption
               )
 
               if (msg.isSent) {
@@ -285,10 +286,11 @@ export default function ChatPage() {
         const keyPair = await importKeyPair(storedKeyPair)
         console.log('[Chat Page] Key pair imported successfully')
 
-        console.log('[Chat Page] Calling decryptMessage...')
+        console.log('[Chat Page] Calling decryptMessage with device ID:', deviceId)
         const message = await decryptMessage(
           encryptedMessage,
-          keyPair.privateKey
+          keyPair.privateKey,
+          deviceId  // Pass device ID for multi-device decryption
         )
         console.log('[Chat Page] Message decrypted successfully:', message.substring(0, 50))
 
@@ -375,7 +377,8 @@ export default function ChatPage() {
             if (msg.senderId === userId) {
               const decrypted = await decryptMessage(
                 msg.encryptedContent,
-                keyPair.privateKey
+                keyPair.privateKey,
+                deviceId  // Pass device ID for multi-device decryption
               )
 
               setMessages((prev) => [
@@ -527,9 +530,8 @@ export default function ChatPage() {
           )
         })
 
-        // Find a device with a valid public key
-        let recipientPublicKey: CryptoKey | null = null
-        let deviceWithKey = null
+        // Collect ALL device public keys for multi-device encryption
+        const deviceKeys: Array<{ deviceId: string; publicKey: CryptoKey }> = []
 
         for (const device of devices) {
           if (!device.publicKey) {
@@ -540,7 +542,7 @@ export default function ChatPage() {
           try {
             // Handle both string and object formats
             let publicKeyString: string
-            
+
             if (typeof device.publicKey === 'string') {
               // It's already a string, check if it's valid JSON
               const trimmed = device.publicKey.trim()
@@ -548,7 +550,7 @@ export default function ChatPage() {
                 console.log(`[Send Message] Device ${device.id} has empty publicKey string`)
                 continue
               }
-              
+
               try {
                 // Try to parse it to verify it's valid JSON
                 const parsed = JSON.parse(trimmed)
@@ -576,23 +578,22 @@ export default function ChatPage() {
               continue
             }
 
-            // Import the public key
+            // Import the public key and add to the list
             console.log(`[Send Message] Attempting to import public key from device ${device.id}`)
-            recipientPublicKey = await importPublicKey(publicKeyString)
-            deviceWithKey = device
+            const importedKey = await importPublicKey(publicKeyString)
+            deviceKeys.push({ deviceId: device.id, publicKey: importedKey })
             console.log(`[Send Message] Successfully imported public key from device ${device.id} (${device.deviceName})`)
-            break
           } catch (importError) {
             console.error(`[Send Message] Failed to import public key from device ${device.id}:`, importError)
             continue
           }
         }
 
-        if (!recipientPublicKey || !deviceWithKey) {
+        if (deviceKeys.length === 0) {
           const deviceCount = devices.length
           const hasDevices = deviceCount > 0
-          const hasDevicesWithoutKeys = devices.some((d: any) => !d.publicKey || !d.publicKey.trim())
-          
+          const hasDevicesWithoutKeys = devices.some((d: { publicKey?: string }) => !d.publicKey || (typeof d.publicKey === 'string' && !d.publicKey.trim()))
+
           let errorMessage = 'Cannot send encrypted message. '
           if (!hasDevices) {
             errorMessage += 'The recipient has not registered any devices yet. '
@@ -602,9 +603,11 @@ export default function ChatPage() {
             errorMessage += 'Could not find a valid encryption key for the recipient. '
           }
           errorMessage += 'Ask them to visit their dashboard to register their device with encryption keys.'
-          
+
           throw new Error(errorMessage)
         }
+
+        console.log(`[Send Message] Encrypting message for ${deviceKeys.length} device(s)`)
 
         // Log WebRTC connection status (but don't block sending)
         if (!isReady || !client) {
@@ -620,10 +623,10 @@ export default function ChatPage() {
           }
         }
 
-        // Encrypt message for recipient
-        const encryptedMessage = await encryptMessage(
+        // Encrypt message for ALL recipient devices (multi-device encryption)
+        const encryptedMessage = await encryptMessageMultiDevice(
           messageText,
-          recipientPublicKey
+          deviceKeys
         )
 
         // Get sender's own key pair to encrypt for local storage

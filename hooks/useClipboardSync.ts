@@ -221,7 +221,7 @@ export function useClipboardSync(): UseClipboardSyncReturn {
         const keyPair = await importKeyPair(storedKeyPair)
         
         // Decrypt clipboard data
-        const clipboardText = await decryptMessage(encryptedData, keyPair.privateKey)
+        const clipboardText = await decryptMessage(encryptedData, keyPair.privateKey, currentDeviceId.current!)
         
         // Write to clipboard
         await navigator.clipboard.writeText(clipboardText)
