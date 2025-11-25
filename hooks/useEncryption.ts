@@ -275,9 +275,26 @@ export function useEncryption() {
       initializationAttempted.current = true
       setState((prev) => ({ ...prev, isLoading: true, error: null }))
 
-      const deviceId = localStorage.getItem(DEVICE_ID_KEY)
+      // Helper to check if device ID is a proper UUID (server-assigned)
+      // Temporary IDs look like "device-1234567890-abc123"
+      const isProperDeviceId = (id: string) => {
+        // UUID pattern: 8-4-4-4-12 hex characters
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+      }
+
+      // Wait for proper device ID with retries
+      // Device registration may still be in progress
+      let deviceId = localStorage.getItem(DEVICE_ID_KEY)
+      let retries = 10
+      while ((!deviceId || !isProperDeviceId(deviceId)) && retries > 0) {
+        console.log(`[Encryption] Waiting for device registration to complete... (attempt ${11 - retries})`)
+        await new Promise(resolve => setTimeout(resolve, 500))
+        deviceId = localStorage.getItem(DEVICE_ID_KEY)
+        retries--
+      }
+
       if (!deviceId) {
-        console.log('[Encryption] No device ID found, waiting for device registration')
+        console.log('[Encryption] No device ID found after waiting, will retry later')
         setState({
           isInitialized: false,
           isLoading: false,
@@ -287,6 +304,20 @@ export function useEncryption() {
         initializationAttempted.current = false
         return
       }
+
+      if (!isProperDeviceId(deviceId)) {
+        console.log('[Encryption] Device ID not yet updated to server ID, will retry later')
+        setState({
+          isInitialized: false,
+          isLoading: false,
+          error: null,
+          requiresSetup: false,
+        })
+        initializationAttempted.current = false
+        return
+      }
+
+      console.log('[Encryption] Using device ID:', deviceId)
 
       try {
         // Fetch encryption key from server
