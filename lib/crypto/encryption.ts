@@ -199,22 +199,31 @@ export async function decryptMessage(
   return decryptHybrid(encryptedKey, encryptedData, iv, recipientPrivateKey)
 }
 
-// Utility functions
+// Utility functions - Chrome-compatible base64 encoding for binary data
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer)
+  const len = bytes.byteLength
   let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
+
+  // Process in chunks to avoid stack overflow on large data
+  const chunkSize = 0x8000 // 32KB chunks
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len))
+    binary += String.fromCharCode.apply(null, Array.from(chunk))
   }
+
   return btoa(binary)
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
+  const len = binary.length
+  const bytes = new Uint8Array(len)
+
+  for (let i = 0; i < len; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
+
   return bytes.buffer
 }
 
