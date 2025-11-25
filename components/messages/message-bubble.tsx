@@ -4,14 +4,12 @@ interface MessageBubbleProps {
   message: string
   isOwn: boolean
   timestamp: Date
-  senderName?: string
 }
 
 export function MessageBubble({
   message,
   isOwn,
   timestamp,
-  senderName,
 }: MessageBubbleProps) {
   return (
     <div
@@ -24,9 +22,6 @@ export function MessageBubble({
             : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
         }`}
       >
-        {!isOwn && senderName && (
-          <p className="text-xs font-semibold mb-1 opacity-75">{senderName}</p>
-        )}
         <p className="text-xs sm:text-sm whitespace-pre-wrap break-words">{message}</p>
         <p
           className={`text-[10px] sm:text-xs mt-1 ${

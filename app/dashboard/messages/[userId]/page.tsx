@@ -827,9 +827,9 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen overflow-hidden">
       <DeviceRegistration />
-      <div className="border-b border-gray-200 dark:border-gray-700 p-4">
+      <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700 p-4">
         <div className="flex items-center gap-4">
           <button
             onClick={() => router.push('/dashboard/messages')}
@@ -892,7 +892,7 @@ export default function ChatPage() {
 
       {/* Connection status indicator */}
       {isReady && peerConnectionState && (
-        <div className={`border-t border-gray-200 dark:border-gray-700 p-2 ${
+        <div className={`flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 ${
           peerConnectionState === 'connected' && dataChannelState === 'open'
             ? 'bg-green-50 dark:bg-green-900/20'
             : 'bg-yellow-50 dark:bg-yellow-900/20'
@@ -912,7 +912,7 @@ export default function ChatPage() {
       )}
 
       {recipientDeviceStatus && !recipientDeviceStatus.hasPublicKey && (
-        <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-yellow-50 dark:bg-yellow-900/20">
+        <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4 bg-yellow-50 dark:bg-yellow-900/20">
           <div className="flex items-start gap-2">
             <svg
               className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0"
@@ -947,7 +947,7 @@ export default function ChatPage() {
       />
 
       {sendError && (
-        <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-red-50 dark:bg-red-900/20">
+        <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4 bg-red-50 dark:bg-red-900/20">
           <div className="flex items-start gap-2">
             <svg
               className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0"

@@ -26,7 +26,7 @@ export function MessageInput({ onSend, disabled }: MessageInputProps) {
   }
 
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 p-2 sm:p-3 lg:p-4">
+    <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 sm:p-3 lg:p-4">
       <div className="flex gap-2">
         <textarea
           value={message}
