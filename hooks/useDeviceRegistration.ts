@@ -204,26 +204,30 @@ export function useDeviceRegistration() {
       try {
         // Check if device already has keys stored
         const hasKeys = await hasKeyPair(deviceId)
+        // Track if we generated fresh keys (need to update server even if device exists)
+        let keysWereFreshlyGenerated = false
 
         let publicKeyString: string
 
         if (!hasKeys) {
           // Generate new key pair
+          console.log('[Device Registration] No local keys found, generating new key pair...')
           const keyPair = await generateKeyPair()
           const exported = await exportKeyPair(keyPair)
-          
+
           // Store keys locally
           await storeKeyPair(deviceId, exported)
-          
+
           // Export public key for registration
           publicKeyString = await exportPublicKey(keyPair.publicKey)
+          keysWereFreshlyGenerated = true
         } else {
           // Retrieve existing keys
           const stored = await getKeyPair(deviceId)
           if (!stored) {
             throw new Error('Failed to retrieve stored keys')
           }
-          
+
           // Import and export public key
           const { importPublicKey } = await import('@/lib/crypto/keys')
           const publicKey = await importPublicKey(stored.publicKey)
@@ -450,12 +454,18 @@ export function useDeviceRegistration() {
             publicKeyLength: existingDevice.publicKey?.length || 0,
           })
           
-          // Check if it has a public key, if not, update it
-          const needsUpdate = !existingDevice.publicKey || 
+          // Check if server needs public key update:
+          // 1. Device has no public key on server, OR
+          // 2. We just generated fresh local keys (e.g., user cleared cache)
+          const serverHasNoKey = !existingDevice.publicKey ||
             (typeof existingDevice.publicKey === 'string' && existingDevice.publicKey.trim() === '')
-          
+          const needsUpdate = serverHasNoKey || keysWereFreshlyGenerated
+
           if (needsUpdate) {
-            console.log('[Device Registration] Updating existing device with public key')
+            console.log('[Device Registration] Updating server public key:', {
+              serverHasNoKey,
+              keysWereFreshlyGenerated,
+            })
             // Update device with public key
             try {
               const updateResponse = await fetch(`/api/devices/${existingDevice.id}`, {
