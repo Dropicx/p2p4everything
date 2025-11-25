@@ -388,6 +388,25 @@ export function useDeviceRegistration() {
             publicKeyLength: registeredDevice.publicKey?.length || 0,
           })
 
+          // IMPORTANT: Update localStorage with the server's device ID (UUID)
+          // This ensures the device ID used for encryption matches the database ID
+          const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
+          const newDeviceId = registeredDevice.id
+
+          if (oldDeviceId !== newDeviceId) {
+            console.log('[Device Registration] Updating device ID from', oldDeviceId, 'to', newDeviceId)
+
+            // Migrate the key pair to the new device ID
+            const storedKeys = await getKeyPair(oldDeviceId || deviceId)
+            if (storedKeys) {
+              await storeKeyPair(newDeviceId, storedKeys)
+              console.log('[Device Registration] Migrated key pair to new device ID')
+            }
+
+            // Update localStorage with the server's device ID
+            localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
+          }
+
           // Calculate fingerprint for display
           const publicKey = await importPublicKey(publicKeyString)
           const fingerprint = await getKeyFingerprint(publicKey)
@@ -454,6 +473,25 @@ export function useDeviceRegistration() {
             }
           } else {
             console.log('[Device Registration] Device already has public key, skipping update')
+          }
+
+          // IMPORTANT: Update localStorage with the server's device ID (UUID)
+          // This ensures the device ID used for encryption matches the database ID
+          const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
+          const newDeviceId = existingDevice.id
+
+          if (oldDeviceId !== newDeviceId) {
+            console.log('[Device Registration] Updating device ID from', oldDeviceId, 'to', newDeviceId)
+
+            // Migrate the key pair to the new device ID
+            const storedKeys = await getKeyPair(oldDeviceId || deviceId)
+            if (storedKeys) {
+              await storeKeyPair(newDeviceId, storedKeys)
+              console.log('[Device Registration] Migrated key pair to new device ID')
+            }
+
+            // Update localStorage with the server's device ID
+            localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
           }
 
           const publicKey = await importPublicKey(publicKeyString)
