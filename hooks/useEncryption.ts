@@ -364,25 +364,25 @@ export function useEncryption() {
           return
         }
 
-        // Get device's key pair
-        const storedKeyPair = await getKeyPair(deviceId)
-        if (!storedKeyPair) {
-          console.log('[Encryption] No device key pair found, waiting for device registration')
-          setState({
-            isInitialized: false,
-            isLoading: false,
-            error: null,
-            requiresSetup: false,
-            requiresBackupPassword: false,
-          })
-          initializationAttempted.current = false
-          return
-        }
-
-        const keyPair = await importKeyPair(storedKeyPair)
-
         // Decrypt based on key type
         if (data.keyType === 'device') {
+          // Device-specific key - need local key pair to decrypt
+          const storedKeyPair = await getKeyPair(deviceId)
+          if (!storedKeyPair) {
+            console.log('[Encryption] No device key pair found, waiting for device registration')
+            setState({
+              isInitialized: false,
+              isLoading: false,
+              error: null,
+              requiresSetup: false,
+              requiresBackupPassword: false,
+            })
+            initializationAttempted.current = false
+            return
+          }
+
+          const keyPair = await importKeyPair(storedKeyPair)
+
           // Decrypt with device's private key
           console.log('[Encryption] Decrypting master key with device key...')
           const masterKey = await decryptMasterKeyFromDevice(
@@ -401,7 +401,7 @@ export function useEncryption() {
           })
         } else if (data.keyType === 'backup' && data.salt) {
           // This is a new device - need user's backup password to decrypt
-          // Store the backup data for later use when user provides password
+          // Don't need local keys yet - will generate after unlocking
           console.log('[Encryption] New device detected, backup password required')
 
           // Store backup data in ref for later use
