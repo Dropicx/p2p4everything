@@ -6,8 +6,9 @@ import { Navbar } from '@/components/layout/navbar'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useToast, ToastContainer } from '@/components/ui/toast'
+import { EncryptionProvider } from '@/components/providers/encryption-provider'
 
-export default function DashboardLayout({
+function DashboardContent({
   children,
 }: {
   children: React.ReactNode
@@ -193,6 +194,18 @@ export default function DashboardLayout({
         {children}
       </main>
     </div>
+  )
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  return (
+    <EncryptionProvider>
+      <DashboardContent>{children}</DashboardContent>
+    </EncryptionProvider>
   )
 }
 

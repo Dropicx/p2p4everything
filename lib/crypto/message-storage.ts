@@ -1,10 +1,16 @@
 /**
  * Client-side encrypted message storage using IndexedDB
  * Provides persistent storage for encrypted messages with 30-day auto-cleanup
+ *
+ * Messages are stored with optional master key encryption.
+ * The encryptedContent field is already encrypted with E2E encryption;
+ * the master key encryption adds a second layer for all fields.
  */
 
+import { encryptData, decryptData, isEncrypted } from './indexeddb-encryption'
+
 const DB_NAME = 'p2p4everything-messages'
-const DB_VERSION = 2 // Incremented for isRead field
+const DB_VERSION = 3 // Incremented for master key encryption
 const STORE_NAME = 'messages'
 const DAYS_TO_KEEP = 30
 
@@ -13,11 +19,38 @@ export interface StoredMessage {
   conversationId: string // Indexed for efficient queries
   senderId: string
   receiverId: string
-  encryptedContent: string // Encrypted message: sent (encrypted with sender's public key) | received (encrypted with recipient's public key)
+  encryptedContent: string // E2E encrypted message content
   timestamp: number // Unix timestamp in milliseconds
   isSent: boolean // true if sent by this user, false if received
   isRead?: boolean // true if message has been read (default: false for received, true for sent)
   metadataId?: string // Optional link to server metadata
+}
+
+// Internal storage format that includes encryption wrapper
+interface StoredMessageRecord {
+  messageId: string // Primary key (always unencrypted for lookups)
+  conversationId: string // Index field (always unencrypted for queries)
+  timestamp: number // Index field (always unencrypted for queries)
+  data: string | StoredMessage // Encrypted string or unencrypted message
+}
+
+// Global reference to master key getter function
+let getMasterKeyFn: (() => CryptoKey | null) | null = null
+
+/**
+ * Initialize the encrypted storage with a master key getter
+ * Called from EncryptionProvider once master key is available
+ */
+export function initializeEncryptedMessageStorage(getMasterKey: () => CryptoKey | null): void {
+  getMasterKeyFn = getMasterKey
+  console.log('[MessageStorage] Encryption initialized')
+}
+
+/**
+ * Check if encryption is available for message storage
+ */
+export function isMessageStorageEncryptionAvailable(): boolean {
+  return getMasterKeyFn !== null && getMasterKeyFn() !== null
 }
 
 /**
@@ -56,15 +89,76 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 /**
+ * Encrypt message data for storage (excluding index fields)
+ */
+async function encryptMessageData(message: StoredMessage): Promise<string | StoredMessage> {
+  const masterKey = getMasterKeyFn?.()
+  if (!masterKey) {
+    // Store unencrypted if no master key
+    return message
+  }
+
+  try {
+    return await encryptData(message, masterKey)
+  } catch (error) {
+    console.warn('[MessageStorage] Encryption failed, storing unencrypted:', error)
+    return message
+  }
+}
+
+/**
+ * Decrypt message data from storage
+ */
+async function decryptMessageData(data: string | StoredMessage): Promise<StoredMessage | null> {
+  if (typeof data === 'object') {
+    // Already unencrypted
+    return data
+  }
+
+  if (!isEncrypted(data)) {
+    // Not encrypted string - try to parse as JSON (legacy)
+    try {
+      return JSON.parse(data) as StoredMessage
+    } catch {
+      return null
+    }
+  }
+
+  const masterKey = getMasterKeyFn?.()
+  if (!masterKey) {
+    console.log('[MessageStorage] Cannot decrypt - master key not available')
+    return null
+  }
+
+  try {
+    return await decryptData<StoredMessage>(data, masterKey)
+  } catch (error) {
+    console.error('[MessageStorage] Decryption failed:', error)
+    return null
+  }
+}
+
+/**
  * Store an encrypted message in IndexedDB
  */
 export async function storeMessage(message: StoredMessage): Promise<void> {
   const db = await openDatabase()
 
+  // Encrypt the message data
+  const encryptedData = await encryptMessageData(message)
+
+  // Store with index fields unencrypted for queries
+  const record: StoredMessageRecord = {
+    messageId: message.messageId,
+    conversationId: message.conversationId,
+    timestamp: message.timestamp,
+    data: encryptedData,
+  }
+
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_NAME], 'readwrite')
     const store = transaction.objectStore(STORE_NAME)
-    const request = store.put(message)
+    const request = store.put(record)
 
     request.onsuccess = () => {
       console.log(`[Message Storage] Stored message ${message.messageId}`)
@@ -103,16 +197,37 @@ export async function getMessages(
 
     const request = index.openCursor(range, 'next')
     const messages: StoredMessage[] = []
+    const pendingDecryptions: Promise<void>[] = []
 
     request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor && (!limit || messages.length < limit)) {
-        messages.push(cursor.value)
+        const record = cursor.value as StoredMessageRecord
+
+        // Handle both old format (direct fields) and new format (data field)
+        if (record.data !== undefined) {
+          // New format with data field
+          pendingDecryptions.push(
+            decryptMessageData(record.data).then((decrypted) => {
+              if (decrypted) {
+                messages.push(decrypted)
+              }
+            })
+          )
+        } else {
+          // Legacy format - record is the message itself
+          messages.push(record as unknown as StoredMessage)
+        }
         cursor.continue()
       } else {
-        console.log(`[Message Storage] Retrieved ${messages.length} messages for conversation ${conversationId}`)
-        resolve(messages)
+        // Wait for all decryptions to complete
+        Promise.all(pendingDecryptions).then(() => {
+          // Sort by timestamp since async decryption may have reordered
+          messages.sort((a, b) => a.timestamp - b.timestamp)
+          console.log(`[Message Storage] Retrieved ${messages.length} messages for conversation ${conversationId}`)
+          resolve(messages)
+        })
       }
     }
 
@@ -137,8 +252,20 @@ export async function getMessageById(messageId: string): Promise<StoredMessage |
     const store = transaction.objectStore(STORE_NAME)
     const request = store.get(messageId)
 
-    request.onsuccess = () => {
-      resolve(request.result || null)
+    request.onsuccess = async () => {
+      const record = request.result as StoredMessageRecord | undefined
+      if (!record) {
+        resolve(null)
+        return
+      }
+
+      // Handle both formats
+      if (record.data !== undefined) {
+        const decrypted = await decryptMessageData(record.data)
+        resolve(decrypted)
+      } else {
+        resolve(record as unknown as StoredMessage)
+      }
     }
 
     request.onerror = () => {
@@ -288,15 +415,31 @@ export async function markConversationAsRead(conversationId: string): Promise<vo
     const index = store.index('conversationId')
     const request = index.openCursor(IDBKeyRange.only(conversationId))
 
-    request.onsuccess = (event) => {
+    request.onsuccess = async (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
-        const message = cursor.value as StoredMessage
-        // Only update received messages that aren't already read
-        if (!message.isSent && !message.isRead) {
+        const record = cursor.value as StoredMessageRecord
+
+        // Handle both formats
+        let message: StoredMessage | null = null
+        if (record.data !== undefined) {
+          message = await decryptMessageData(record.data)
+        } else {
+          message = record as unknown as StoredMessage
+        }
+
+        if (message && !message.isSent && !message.isRead) {
           message.isRead = true
-          cursor.update(message)
+
+          // Re-encrypt and update
+          const encryptedData = await encryptMessageData(message)
+          cursor.update({
+            messageId: message.messageId,
+            conversationId: message.conversationId,
+            timestamp: message.timestamp,
+            data: encryptedData,
+          })
         }
         cursor.continue()
       }
@@ -326,19 +469,34 @@ export async function getUnreadCount(conversationId: string): Promise<number> {
     const index = store.index('conversationId')
     const request = index.openCursor(IDBKeyRange.only(conversationId))
     let unreadCount = 0
+    const pendingDecryptions: Promise<void>[] = []
 
     request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
-        const message = cursor.value as StoredMessage
-        // Count received messages that haven't been read
-        if (!message.isSent && !message.isRead) {
-          unreadCount++
+        const record = cursor.value as StoredMessageRecord
+
+        // Handle both formats
+        if (record.data !== undefined) {
+          pendingDecryptions.push(
+            decryptMessageData(record.data).then((message) => {
+              if (message && !message.isSent && !message.isRead) {
+                unreadCount++
+              }
+            })
+          )
+        } else {
+          const message = record as unknown as StoredMessage
+          if (!message.isSent && !message.isRead) {
+            unreadCount++
+          }
         }
         cursor.continue()
       } else {
-        resolve(unreadCount)
+        Promise.all(pendingDecryptions).then(() => {
+          resolve(unreadCount)
+        })
       }
     }
 
@@ -364,20 +522,36 @@ export async function getAllUnreadCounts(): Promise<Map<string, number>> {
     const store = transaction.objectStore(STORE_NAME)
     const request = store.openCursor()
     const unreadCounts = new Map<string, number>()
+    const pendingDecryptions: Promise<void>[] = []
 
     request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
-        const message = cursor.value as StoredMessage
-        // Count received messages that haven't been read
-        if (!message.isSent && !message.isRead) {
-          const current = unreadCounts.get(message.conversationId) || 0
-          unreadCounts.set(message.conversationId, current + 1)
+        const record = cursor.value as StoredMessageRecord
+
+        // Handle both formats
+        if (record.data !== undefined) {
+          pendingDecryptions.push(
+            decryptMessageData(record.data).then((message) => {
+              if (message && !message.isSent && !message.isRead) {
+                const current = unreadCounts.get(message.conversationId) || 0
+                unreadCounts.set(message.conversationId, current + 1)
+              }
+            })
+          )
+        } else {
+          const message = record as unknown as StoredMessage
+          if (!message.isSent && !message.isRead) {
+            const current = unreadCounts.get(message.conversationId) || 0
+            unreadCounts.set(message.conversationId, current + 1)
+          }
         }
         cursor.continue()
       } else {
-        resolve(unreadCounts)
+        Promise.all(pendingDecryptions).then(() => {
+          resolve(unreadCounts)
+        })
       }
     }
 
@@ -403,25 +577,114 @@ export async function getUnreadCounts(): Promise<Record<string, number>> {
     const store = transaction.objectStore(STORE_NAME)
     const request = store.openCursor()
     const unreadCounts: Record<string, number> = {}
+    const pendingDecryptions: Promise<void>[] = []
 
     request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
-        const message = cursor.value as StoredMessage
-        // Count received messages that haven't been read, keyed by sender
-        if (!message.isSent && !message.isRead) {
-          const senderId = message.senderId
-          unreadCounts[senderId] = (unreadCounts[senderId] || 0) + 1
+        const record = cursor.value as StoredMessageRecord
+
+        // Handle both formats
+        if (record.data !== undefined) {
+          pendingDecryptions.push(
+            decryptMessageData(record.data).then((message) => {
+              if (message && !message.isSent && !message.isRead) {
+                const senderId = message.senderId
+                unreadCounts[senderId] = (unreadCounts[senderId] || 0) + 1
+              }
+            })
+          )
+        } else {
+          const message = record as unknown as StoredMessage
+          if (!message.isSent && !message.isRead) {
+            const senderId = message.senderId
+            unreadCounts[senderId] = (unreadCounts[senderId] || 0) + 1
+          }
         }
         cursor.continue()
       } else {
-        resolve(unreadCounts)
+        Promise.all(pendingDecryptions).then(() => {
+          resolve(unreadCounts)
+        })
       }
     }
 
     request.onerror = () => {
       reject(new Error(`Failed to get unread counts: ${request.error}`))
+    }
+
+    transaction.oncomplete = () => {
+      db.close()
+    }
+  })
+}
+
+/**
+ * Migrate unencrypted messages to encrypted format
+ * Should be called once master key is available
+ */
+export async function migrateMessagesToEncrypted(): Promise<number> {
+  const masterKey = getMasterKeyFn?.()
+  if (!masterKey) {
+    console.log('[MessageStorage] Cannot migrate - master key not available')
+    return 0
+  }
+
+  const db = await openDatabase()
+  let migratedCount = 0
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readwrite')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.openCursor()
+
+    request.onsuccess = async (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        const record = cursor.value
+
+        // Check if needs migration
+        const needsMigration =
+          // Legacy format without data field
+          (record.data === undefined && record.senderId !== undefined) ||
+          // New format but data is not encrypted
+          (record.data !== undefined && !isEncrypted(record.data))
+
+        if (needsMigration) {
+          try {
+            // Get the message data
+            const message: StoredMessage = record.data !== undefined
+              ? (typeof record.data === 'object' ? record.data : JSON.parse(record.data))
+              : record
+
+            // Encrypt it
+            const encrypted = await encryptData(message, masterKey)
+
+            // Update the record with new format
+            cursor.update({
+              messageId: message.messageId,
+              conversationId: message.conversationId,
+              timestamp: message.timestamp,
+              data: encrypted,
+            })
+
+            migratedCount++
+          } catch (error) {
+            console.error(`[MessageStorage] Failed to migrate message ${record.messageId}:`, error)
+          }
+        }
+
+        cursor.continue()
+      } else {
+        console.log(`[MessageStorage] Migration complete: ${migratedCount} messages migrated`)
+        resolve(migratedCount)
+      }
+    }
+
+    request.onerror = () => {
+      reject(new Error('Message migration failed'))
     }
 
     transaction.oncomplete = () => {

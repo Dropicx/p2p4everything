@@ -22,12 +22,13 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  devices      Device[]
-  connectionsA Connection[] @relation("UserA")
-  connectionsB Connection[] @relation("UserB")
-  fileAds      FileAdvertisement[]
-  sentMessages MessageMetadata[] @relation("Sender")
+  devices        Device[]
+  connectionsA   Connection[] @relation("UserA")
+  connectionsB   Connection[] @relation("UserB")
+  fileAds        FileAdvertisement[]
+  sentMessages   MessageMetadata[] @relation("Sender")
   receivedMessages MessageMetadata[] @relation("Receiver")
+  encryptionKeys UserEncryptionKey[]
 
   @@index([clerkUserId])
   @@index([email])
@@ -46,7 +47,8 @@ model Device {
   lastSeen            DateTime @default(now())
   createdAt           DateTime @default(now())
 
-  fileAds     FileAdvertisement[]
+  fileAds       FileAdvertisement[]
+  encryptionKey UserEncryptionKey?
 
   @@index([userId])
   @@index([lastSeen])
@@ -105,5 +107,21 @@ model MessageMetadata {
   @@index([receiverId])
   @@index([timestamp])
   @@index([receiverId, delivered]) // Query undelivered messages efficiently
+}
+
+model UserEncryptionKey {
+  id                 String   @id @default(uuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId           String?  @unique // null for backup keys
+  device             Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  encryptedMasterKey String   @db.Text // Base64-encoded encrypted key
+  keyType            String   // 'device' | 'backup'
+  salt               String?  // For backup key derivation (base64)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, keyType]) // One backup key per user
+  @@index([userId])
 }
 
