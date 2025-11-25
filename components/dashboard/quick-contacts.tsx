@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useAuth } from '@clerk/nextjs'
 import { Card } from '@/components/ui/card'
 
 interface Contact {
@@ -15,10 +16,16 @@ interface Contact {
 }
 
 export function QuickContacts() {
+  const { isLoaded, isSignedIn } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
+    // Wait for auth to be ready before fetching
+    if (!isLoaded || !isSignedIn) {
+      return
+    }
+
     async function fetchRecentContacts() {
       try {
         // Fetch connections
@@ -76,7 +83,7 @@ export function QuickContacts() {
     }
 
     fetchRecentContacts()
-  }, [])
+  }, [isLoaded, isSignedIn])
 
   const getInitials = (contact: Contact) => {
     const name = contact.displayName || contact.username || contact.email
