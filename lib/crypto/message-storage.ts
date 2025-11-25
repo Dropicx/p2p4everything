@@ -405,56 +405,101 @@ export function getConversationId(userId1: string, userId2: string): string {
 
 /**
  * Mark all messages in a conversation as read
+ *
+ * Note: We collect items first, then update in separate transactions
+ * to avoid IndexedDB transaction timeout issues with async operations
  */
 export async function markConversationAsRead(conversationId: string): Promise<void> {
   const db = await openDatabase()
 
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite')
+  // Step 1: Collect all unread messages (synchronously)
+  interface UnreadItem {
+    messageId: string
+    record: StoredMessageRecord
+  }
+  const unreadItems: UnreadItem[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
     const store = transaction.objectStore(STORE_NAME)
     const index = store.index('conversationId')
     const request = index.openCursor(IDBKeyRange.only(conversationId))
 
-    request.onsuccess = async (event) => {
+    request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
         const record = cursor.value as StoredMessageRecord
-
-        // Handle both formats
-        let message: StoredMessage | null = null
-        if (record.data !== undefined) {
-          message = await decryptMessageData(record.data)
-        } else {
-          message = record as unknown as StoredMessage
-        }
-
-        if (message && !message.isSent && !message.isRead) {
-          message.isRead = true
-
-          // Re-encrypt and update
-          const encryptedData = await encryptMessageData(message)
-          cursor.update({
-            messageId: message.messageId,
-            conversationId: message.conversationId,
-            timestamp: message.timestamp,
-            data: encryptedData,
-          })
-        }
+        unreadItems.push({
+          messageId: record.messageId,
+          record,
+        })
         cursor.continue()
+      } else {
+        resolve()
       }
     }
 
     request.onerror = () => {
-      reject(new Error(`Failed to mark conversation as read: ${request.error}`))
+      reject(new Error(`Failed to scan conversation: ${request.error}`))
     }
 
     transaction.oncomplete = () => {
-      console.log(`[Message Storage] Marked conversation ${conversationId} as read`)
       db.close()
-      resolve()
     }
   })
+
+  // Step 2: Process each item and update if needed
+  let updatedCount = 0
+  for (const item of unreadItems) {
+    try {
+      // Decrypt to check if unread (async operation outside transaction)
+      let message: StoredMessage | null = null
+      if (item.record.data !== undefined) {
+        message = await decryptMessageData(item.record.data)
+      } else {
+        message = item.record as unknown as StoredMessage
+      }
+
+      if (message && !message.isSent && !message.isRead) {
+        message.isRead = true
+
+        // Re-encrypt the updated message
+        const encryptedData = await encryptMessageData(message)
+
+        // Write in a new transaction
+        const writeDb = await openDatabase()
+        await new Promise<void>((resolve, reject) => {
+          const transaction = writeDb.transaction([STORE_NAME], 'readwrite')
+          const store = transaction.objectStore(STORE_NAME)
+
+          const request = store.put({
+            messageId: message!.messageId,
+            conversationId: message!.conversationId,
+            timestamp: message!.timestamp,
+            data: encryptedData,
+          })
+
+          request.onsuccess = () => {
+            updatedCount++
+            resolve()
+          }
+
+          request.onerror = () => {
+            reject(new Error(`Failed to update message ${message!.messageId}`))
+          }
+
+          transaction.oncomplete = () => {
+            writeDb.close()
+          }
+        })
+      }
+    } catch (error) {
+      console.error(`[Message Storage] Failed to mark message as read:`, error)
+    }
+  }
+
+  console.log(`[Message Storage] Marked ${updatedCount} messages as read in conversation ${conversationId}`)
 }
 
 /**
@@ -623,6 +668,9 @@ export async function getUnreadCounts(): Promise<Record<string, number>> {
 /**
  * Migrate unencrypted messages to encrypted format
  * Should be called once master key is available
+ *
+ * Note: We collect items first, then migrate in separate transactions
+ * to avoid IndexedDB transaction timeout issues with async operations
  */
 export async function migrateMessagesToEncrypted(): Promise<number> {
   const masterKey = getMasterKeyFn?.()
@@ -632,14 +680,19 @@ export async function migrateMessagesToEncrypted(): Promise<number> {
   }
 
   const db = await openDatabase()
-  let migratedCount = 0
 
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], 'readwrite')
+  // Step 1: Collect all items that need migration (synchronously)
+  interface MigrationItem {
+    message: StoredMessage
+  }
+  const itemsToMigrate: MigrationItem[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
     const store = transaction.objectStore(STORE_NAME)
     const request = store.openCursor()
 
-    request.onsuccess = async (event) => {
+    request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
@@ -653,42 +706,74 @@ export async function migrateMessagesToEncrypted(): Promise<number> {
           (record.data !== undefined && !isEncrypted(record.data))
 
         if (needsMigration) {
-          try {
-            // Get the message data
-            const message: StoredMessage = record.data !== undefined
-              ? (typeof record.data === 'object' ? record.data : JSON.parse(record.data))
-              : record
+          // Extract the message data for migration
+          const message: StoredMessage = record.data !== undefined
+            ? (typeof record.data === 'object' ? record.data : JSON.parse(record.data))
+            : record
 
-            // Encrypt it
-            const encrypted = await encryptData(message, masterKey)
-
-            // Update the record with new format
-            cursor.update({
-              messageId: message.messageId,
-              conversationId: message.conversationId,
-              timestamp: message.timestamp,
-              data: encrypted,
-            })
-
-            migratedCount++
-          } catch (error) {
-            console.error(`[MessageStorage] Failed to migrate message ${record.messageId}:`, error)
-          }
+          itemsToMigrate.push({ message })
         }
 
         cursor.continue()
       } else {
-        console.log(`[MessageStorage] Migration complete: ${migratedCount} messages migrated`)
-        resolve(migratedCount)
+        resolve()
       }
     }
 
     request.onerror = () => {
-      reject(new Error('Message migration failed'))
+      reject(new Error('Message migration scan failed'))
     }
 
     transaction.oncomplete = () => {
       db.close()
     }
   })
+
+  if (itemsToMigrate.length === 0) {
+    console.log('[MessageStorage] No messages need migration')
+    return 0
+  }
+
+  console.log(`[MessageStorage] Found ${itemsToMigrate.length} messages to migrate`)
+
+  // Step 2: Migrate each item in its own transaction
+  let migratedCount = 0
+  for (const item of itemsToMigrate) {
+    try {
+      // Encrypt the data (async operation outside of transaction)
+      const encrypted = await encryptData(item.message, masterKey)
+
+      // Write in a new transaction
+      const writeDb = await openDatabase()
+      await new Promise<void>((resolve, reject) => {
+        const transaction = writeDb.transaction([STORE_NAME], 'readwrite')
+        const store = transaction.objectStore(STORE_NAME)
+
+        const request = store.put({
+          messageId: item.message.messageId,
+          conversationId: item.message.conversationId,
+          timestamp: item.message.timestamp,
+          data: encrypted,
+        })
+
+        request.onsuccess = () => {
+          migratedCount++
+          resolve()
+        }
+
+        request.onerror = () => {
+          reject(new Error(`Failed to update message ${item.message.messageId}`))
+        }
+
+        transaction.oncomplete = () => {
+          writeDb.close()
+        }
+      })
+    } catch (error) {
+      console.error(`[MessageStorage] Failed to migrate message ${item.message.messageId}:`, error)
+    }
+  }
+
+  console.log(`[MessageStorage] Migration complete: ${migratedCount} messages migrated`)
+  return migratedCount
 }

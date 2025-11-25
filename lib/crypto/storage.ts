@@ -278,6 +278,9 @@ export async function clearAllKeys(): Promise<void> {
 /**
  * Migrate unencrypted keys to encrypted format
  * Should be called once master key is available
+ *
+ * Note: We collect items first, then migrate in separate transactions
+ * to avoid IndexedDB transaction timeout issues with async operations
  */
 export async function migrateKeysToEncrypted(): Promise<number> {
   const masterKey = getMasterKeyFn?.()
@@ -287,14 +290,20 @@ export async function migrateKeysToEncrypted(): Promise<number> {
   }
 
   const database = await initDB()
-  let migratedCount = 0
 
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction([STORE_NAME], 'readwrite')
+  // Step 1: Collect all items that need migration (synchronously)
+  interface MigrationItem {
+    deviceId: string
+    keyPairData: StoredKey
+  }
+  const itemsToMigrate: MigrationItem[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction([STORE_NAME], 'readonly')
     const store = transaction.objectStore(STORE_NAME)
     const request = store.openCursor()
 
-    request.onsuccess = async (event) => {
+    request.onsuccess = (event) => {
       const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
 
       if (cursor) {
@@ -308,41 +317,71 @@ export async function migrateKeysToEncrypted(): Promise<number> {
           (item.data && !isEncrypted(item.data))
 
         if (needsMigration) {
-          try {
-            // Get the key pair data
-            const keyPairData: StoredKey = item.keyPair
-              ? {
-                  deviceId: item.deviceId,
-                  keyPair: item.keyPair,
-                  createdAt: item.createdAt || Date.now(),
-                }
-              : (item.data as StoredKey)
+          // Extract the key pair data for migration
+          const keyPairData: StoredKey = item.keyPair
+            ? {
+                deviceId: item.deviceId,
+                keyPair: item.keyPair,
+                createdAt: item.createdAt || Date.now(),
+              }
+            : (item.data as StoredKey)
 
-            // Encrypt it
-            const encrypted = await encryptData(keyPairData, masterKey)
-
-            // Update the record
-            cursor.update({
-              deviceId: item.deviceId,
-              data: encrypted,
-            })
-
-            migratedCount++
-            console.log(`[KeyStorage] Migrated key for device ${item.deviceId}`)
-          } catch (error) {
-            console.error(`[KeyStorage] Failed to migrate key for device ${item.deviceId}:`, error)
-          }
+          itemsToMigrate.push({
+            deviceId: item.deviceId,
+            keyPairData,
+          })
         }
 
         cursor.continue()
       } else {
-        console.log(`[KeyStorage] Migration complete: ${migratedCount} keys migrated`)
-        resolve(migratedCount)
+        resolve()
       }
     }
 
     request.onerror = () => {
-      reject(new Error('Key migration failed'))
+      reject(new Error('Key migration scan failed'))
     }
   })
+
+  if (itemsToMigrate.length === 0) {
+    console.log('[KeyStorage] No keys need migration')
+    return 0
+  }
+
+  console.log(`[KeyStorage] Found ${itemsToMigrate.length} keys to migrate`)
+
+  // Step 2: Migrate each item in its own transaction
+  let migratedCount = 0
+  for (const item of itemsToMigrate) {
+    try {
+      // Encrypt the data (async operation outside of transaction)
+      const encrypted = await encryptData(item.keyPairData, masterKey)
+
+      // Write in a new transaction
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction([STORE_NAME], 'readwrite')
+        const store = transaction.objectStore(STORE_NAME)
+
+        const request = store.put({
+          deviceId: item.deviceId,
+          data: encrypted,
+        })
+
+        request.onsuccess = () => {
+          migratedCount++
+          console.log(`[KeyStorage] Migrated key for device ${item.deviceId}`)
+          resolve()
+        }
+
+        request.onerror = () => {
+          reject(new Error(`Failed to update key for device ${item.deviceId}`))
+        }
+      })
+    } catch (error) {
+      console.error(`[KeyStorage] Failed to migrate key for device ${item.deviceId}:`, error)
+    }
+  }
+
+  console.log(`[KeyStorage] Migration complete: ${migratedCount} keys migrated`)
+  return migratedCount
 }

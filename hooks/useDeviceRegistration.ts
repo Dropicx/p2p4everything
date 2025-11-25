@@ -23,6 +23,10 @@ const DEVICE_ID_KEY = 'p2p4everything-device-id'
 const DEVICE_NAME_KEY = 'p2p4everything-device-name'
 const DEVICE_REGISTERED_KEY = 'p2p4everything-device-registered'
 
+// Module-level lock to prevent race conditions across component re-mounts
+// This is critical for React 18 Strict Mode which double-invokes effects
+let globalRegistrationLock = false
+
 /**
  * Get or create a device ID stored in localStorage
  */
@@ -109,15 +113,22 @@ export function useDeviceRegistration() {
       return
     }
 
-    // Prevent duplicate registrations
-    if (registrationInProgress.current) {
+    // CRITICAL: Use BOTH module-level and ref-level locks
+    // Check both locks SYNCHRONOUSLY before any async operations
+    // This prevents race conditions in React 18 Strict Mode
+    if (globalRegistrationLock || registrationInProgress.current) {
+      console.log('[Device Registration] Skipping - registration already in progress (global:', globalRegistrationLock, ', ref:', registrationInProgress.current, ')')
       return
     }
 
+    // Set BOTH locks IMMEDIATELY and SYNCHRONOUSLY
+    // This MUST happen before any async operations
+    globalRegistrationLock = true
+    registrationInProgress.current = true
+    console.log('[Device Registration] Acquired registration lock')
+
     async function registerDevice() {
-      // Set registration flag IMMEDIATELY to prevent race conditions
-      // This must be the first thing we do before any async operations
-      registrationInProgress.current = true
+      // Lock is already acquired above - no need to check again
 
       // Check browser capabilities first
       if (!window.crypto || !window.crypto.subtle) {
@@ -126,6 +137,7 @@ export function useDeviceRegistration() {
           isRegistering: false,
           error: 'Web Crypto API is not available in this browser. Please use a modern browser.',
         }))
+        globalRegistrationLock = false
         registrationInProgress.current = false
         return
       }
@@ -136,6 +148,7 @@ export function useDeviceRegistration() {
           isRegistering: false,
           error: 'IndexedDB is not available in this browser. Please use a modern browser.',
         }))
+        globalRegistrationLock = false
         registrationInProgress.current = false
         return
       }
@@ -223,6 +236,8 @@ export function useDeviceRegistration() {
                         error: null,
                         publicKeyFingerprint: fingerprint,
                       })
+                      globalRegistrationLock = false
+                      registrationInProgress.current = false
                       return
                     } else {
                       console.error('[Device Registration] Failed to update server key, falling through to re-register')
@@ -261,6 +276,8 @@ export function useDeviceRegistration() {
                     error: null,
                     publicKeyFingerprint: fingerprint,
                   })
+                  globalRegistrationLock = false
+                  registrationInProgress.current = false
                   return
                 }
               } else {
@@ -699,7 +716,10 @@ export function useDeviceRegistration() {
           error: userFriendlyError,
         }))
       } finally {
+        // Always release the lock in finally block
+        globalRegistrationLock = false
         registrationInProgress.current = false
+        console.log('[Device Registration] Released registration lock')
       }
     }
 
