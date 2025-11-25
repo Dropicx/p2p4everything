@@ -23,10 +23,10 @@ export interface UseClipboardSyncReturn {
   manualSync: () => Promise<void>
   requestPermission: () => Promise<boolean>
   connectedDevices: number
+  isPasting: boolean
 }
 
 const CLIPBOARD_SYNC_ENABLED_KEY = 'p2p4everything-clipboard-sync-enabled'
-const CLIPBOARD_CHECK_INTERVAL = 1000 // Check clipboard every second
 
 export function useClipboardSync(): UseClipboardSyncReturn {
   const { client, isReady } = useWebRTC()
@@ -36,11 +36,12 @@ export function useClipboardSync(): UseClipboardSyncReturn {
   const [lastSyncTime, setLastSyncTime] = useState<number | null>(null)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [connectedDevices, setConnectedDevices] = useState(0)
+  const [isPasting, setIsPasting] = useState(false)
 
   const lastClipboardValue = useRef<string>('')
-  const clipboardCheckInterval = useRef<NodeJS.Timeout | null>(null)
   const currentDeviceId = useRef<string | null>(null)
   const devicesRef = useRef<Device[]>([])
+  const isReceivingSync = useRef(false) // Flag to prevent echo when receiving sync
 
   // Check if clipboard API is supported
   useEffect(() => {
@@ -152,73 +153,60 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     }
   }, [client, isReady, fetchDevices])
 
-  // Monitor clipboard changes
+  // Monitor clipboard changes using copy/cut events
+  // This approach works reliably because it's triggered by user gestures
   useEffect(() => {
     if (!enabled || !isSupported || !isReady || !client) {
-      if (clipboardCheckInterval.current) {
-        clearInterval(clipboardCheckInterval.current)
-        clipboardCheckInterval.current = null
+      return
+    }
+
+    const handleCopyOrCut = async (event: ClipboardEvent) => {
+      // Skip if we're currently receiving a sync (to prevent echo)
+      if (isReceivingSync.current) {
+        console.log('[Clipboard Sync] Skipping copy event - currently receiving sync')
+        return
       }
-      return
-    }
 
-    // Don't start polling if permission is denied
-    if (permissionStatus === 'denied') {
-      setSyncError('Clipboard permission denied. Please grant clipboard access in browser settings.')
-      return
-    }
-
-    // Track consecutive permission errors to avoid immediately marking as denied
-    let permissionErrorCount = 0
-    const MAX_PERMISSION_ERRORS = 3
-
-    // Check clipboard periodically
-    clipboardCheckInterval.current = setInterval(async () => {
       try {
-        // Skip if permission is still in prompt state and we haven't gotten it yet
-        // This gives user time to respond to the browser prompt
-        if (permissionStatus === 'prompt' || permissionStatus === null) {
-          console.log('[Clipboard Sync] Waiting for permission prompt response...')
-          return
+        // Get the copied/cut text from the event
+        let clipboardText = event.clipboardData?.getData('text/plain')
+
+        // If not available from event, try to read from clipboard
+        // (this works because we're in a user gesture context)
+        if (!clipboardText) {
+          // Small delay to let the clipboard update
+          await new Promise(resolve => setTimeout(resolve, 50))
+          try {
+            clipboardText = await navigator.clipboard.readText()
+          } catch (e) {
+            console.log('[Clipboard Sync] Could not read clipboard after copy:', e)
+            return
+          }
         }
 
-        const clipboardText = await navigator.clipboard.readText()
-
-        // Reset error count on success
-        permissionErrorCount = 0
-        setSyncError(null)
-
-        // Only send if clipboard changed
-        if (clipboardText !== lastClipboardValue.current && clipboardText.trim().length > 0) {
+        if (clipboardText && clipboardText.trim().length > 0 && clipboardText !== lastClipboardValue.current) {
+          console.log('[Clipboard Sync] Copy/cut detected, syncing clipboard...')
           lastClipboardValue.current = clipboardText
+          setSyncError(null)
           await sendClipboardToDevices(clipboardText)
         }
-      } catch (error: any) {
-        // Handle permission errors gracefully
-        if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-          permissionErrorCount++
-          console.log(`[Clipboard Sync] Permission error ${permissionErrorCount}/${MAX_PERMISSION_ERRORS}`)
-
-          // Only mark as denied after multiple consecutive errors
-          // This prevents marking denied while user is still responding to prompt
-          if (permissionErrorCount >= MAX_PERMISSION_ERRORS) {
-            setPermissionStatus('denied')
-            setSyncError('Clipboard permission denied. Please grant clipboard access in browser settings.')
-          }
-        } else {
-          // Other errors (e.g., clipboard empty) are not critical
-          console.debug('[Clipboard Sync] Clipboard read error (non-critical):', error)
-        }
-      }
-    }, CLIPBOARD_CHECK_INTERVAL)
-
-    return () => {
-      if (clipboardCheckInterval.current) {
-        clearInterval(clipboardCheckInterval.current)
-        clipboardCheckInterval.current = null
+      } catch (error) {
+        console.error('[Clipboard Sync] Error handling copy/cut event:', error)
       }
     }
-  }, [enabled, isSupported, isReady, client, permissionStatus, sendClipboardToDevices])
+
+    // Listen for copy and cut events on the document
+    document.addEventListener('copy', handleCopyOrCut)
+    document.addEventListener('cut', handleCopyOrCut)
+
+    console.log('[Clipboard Sync] Event listeners attached for copy/cut')
+
+    return () => {
+      document.removeEventListener('copy', handleCopyOrCut)
+      document.removeEventListener('cut', handleCopyOrCut)
+      console.log('[Clipboard Sync] Event listeners removed')
+    }
+  }, [enabled, isSupported, isReady, client, sendClipboardToDevices])
 
   // Listen for incoming clipboard sync messages
   useEffect(() => {
@@ -237,9 +225,17 @@ export function useClipboardSync(): UseClipboardSyncReturn {
         return
       }
 
+      // Don't process if clipboard sync is not enabled
+      if (!enabled) {
+        console.log('[Clipboard Sync] Ignoring incoming sync - feature is disabled')
+        return
+      }
+
       try {
         setSyncError(null)
-        
+        setIsPasting(true)
+        isReceivingSync.current = true
+
         // Get current device's private key
         const storedKeyPair = await getKeyPair(currentDeviceId.current!)
         if (!storedKeyPair) {
@@ -247,19 +243,31 @@ export function useClipboardSync(): UseClipboardSyncReturn {
         }
 
         const keyPair = await importKeyPair(storedKeyPair)
-        
+
         // Decrypt clipboard data
         const clipboardText = await decryptMessage(encryptedData, keyPair.privateKey, currentDeviceId.current!)
-        
-        // Write to clipboard
-        await navigator.clipboard.writeText(clipboardText)
-        lastClipboardValue.current = clipboardText
-        setLastSyncTime(Date.now())
-        
-        console.log(`[Clipboard Sync] Received and applied clipboard from device ${fromDeviceId}`)
+
+        // Write to clipboard - this requires user gesture in some browsers
+        // but we'll try anyway since user enabled the feature
+        try {
+          await navigator.clipboard.writeText(clipboardText)
+          lastClipboardValue.current = clipboardText
+          setLastSyncTime(Date.now())
+          console.log(`[Clipboard Sync] Received and applied clipboard from device ${fromDeviceId}`)
+        } catch (writeError: any) {
+          // If write fails due to permissions, show a notification instead
+          console.warn('[Clipboard Sync] Could not write to clipboard:', writeError)
+          setSyncError(`Clipboard received but could not auto-paste. Text: "${clipboardText.substring(0, 50)}${clipboardText.length > 50 ? '...' : ''}"`)
+        }
       } catch (error) {
         console.error('[Clipboard Sync] Error processing incoming clipboard sync:', error)
         setSyncError('Failed to process clipboard sync')
+      } finally {
+        setIsPasting(false)
+        // Keep the flag true for a short time to prevent copy event from triggering
+        setTimeout(() => {
+          isReceivingSync.current = false
+        }, 500)
       }
     }
 
@@ -275,7 +283,7 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     })
 
     return unsubscribe
-  }, [client, isReady])
+  }, [client, isReady, enabled])
 
   // Request clipboard permission explicitly
   const requestPermission = useCallback(async (): Promise<boolean> => {
@@ -376,6 +384,7 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     manualSync,
     requestPermission,
     connectedDevices,
+    isPasting,
   }
 }
 

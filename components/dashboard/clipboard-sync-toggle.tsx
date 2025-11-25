@@ -15,6 +15,7 @@ export function ClipboardSyncToggle() {
     manualSync,
     requestPermission,
     connectedDevices,
+    isPasting,
   } = useClipboardSync()
 
   if (!isSupported) {
@@ -54,26 +55,25 @@ export function ClipboardSyncToggle() {
 
         {enabled && (
           <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600 dark:text-gray-400">Permission Status:</span>
-              <span
-                className={`font-medium ${
-                  permissionStatus === 'granted'
-                    ? 'text-green-600 dark:text-green-400'
-                    : permissionStatus === 'denied'
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-yellow-600 dark:text-yellow-400'
-                }`}
-              >
-                {permissionStatus === 'granted'
-                  ? 'Granted'
-                  : permissionStatus === 'denied'
-                  ? 'Denied'
-                  : permissionStatus === 'prompt'
-                  ? 'Prompt'
-                  : 'Unknown'}
-              </span>
+            {/* How it works info */}
+            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+              <p className="text-xs text-blue-800 dark:text-blue-200">
+                <strong>How it works:</strong> When you copy or cut text (Ctrl/Cmd+C or Ctrl/Cmd+X),
+                it will automatically sync to your other devices.
+              </p>
             </div>
+
+            {isPasting && (
+              <div className="p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg animate-pulse">
+                <p className="text-sm text-green-800 dark:text-green-200 flex items-center gap-2">
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Receiving clipboard from another device...
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center justify-between text-sm">
               <span className="text-gray-600 dark:text-gray-400">Connected Devices:</span>
@@ -98,37 +98,19 @@ export function ClipboardSyncToggle() {
             )}
 
             <div className="pt-2 space-y-2">
-              {permissionStatus !== 'granted' && (
-                <Button
-                  onClick={requestPermission}
-                  variant="primary"
-                  className="w-full"
-                >
-                  Grant Clipboard Permission
-                </Button>
-              )}
-
               <Button
                 onClick={manualSync}
-                disabled={permissionStatus === 'denied'}
-                variant={permissionStatus === 'granted' ? 'primary' : 'secondary'}
+                variant="primary"
                 className="w-full"
               >
                 Sync Clipboard Now
               </Button>
             </div>
 
-            {permissionStatus === 'denied' && (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Clipboard access was denied. Please enable it in your browser settings (click the lock icon in the address bar).
-              </p>
-            )}
-
-            {permissionStatus === 'prompt' && (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Click &quot;Grant Clipboard Permission&quot; and allow access when prompted by your browser.
-              </p>
-            )}
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Tip: Use the &quot;Sync Clipboard Now&quot; button to manually sync your current clipboard,
+              or just copy/cut text normally and it will sync automatically.
+            </p>
           </div>
         )}
 
