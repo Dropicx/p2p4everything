@@ -21,6 +21,7 @@ export interface UseClipboardSyncReturn {
   lastSyncTime: number | null
   syncError: string | null
   manualSync: () => Promise<void>
+  requestPermission: () => Promise<boolean>
   connectedDevices: number
 }
 
@@ -43,7 +44,7 @@ export function useClipboardSync(): UseClipboardSyncReturn {
 
   // Check if clipboard API is supported
   useEffect(() => {
-    const supported = 
+    const supported =
       typeof navigator !== 'undefined' &&
       'clipboard' in navigator &&
       'readText' in navigator.clipboard &&
@@ -57,7 +58,12 @@ export function useClipboardSync(): UseClipboardSyncReturn {
       navigator.permissions.query({ name: 'clipboard-read' as PermissionName }).then((result) => {
         setPermissionStatus(result.state)
         result.onchange = () => {
+          console.log('[Clipboard Sync] Permission changed to:', result.state)
           setPermissionStatus(result.state)
+          // Clear error when permission changes to granted
+          if (result.state === 'granted') {
+            setSyncError(null)
+          }
         }
       }).catch(() => {
         // Permission API might not be available, but clipboard API might still work
@@ -156,17 +162,32 @@ export function useClipboardSync(): UseClipboardSyncReturn {
       return
     }
 
+    // Don't start polling if permission is denied
+    if (permissionStatus === 'denied') {
+      setSyncError('Clipboard permission denied. Please grant clipboard access in browser settings.')
+      return
+    }
+
+    // Track consecutive permission errors to avoid immediately marking as denied
+    let permissionErrorCount = 0
+    const MAX_PERMISSION_ERRORS = 3
+
     // Check clipboard periodically
     clipboardCheckInterval.current = setInterval(async () => {
       try {
-        // Check permission
-        if (permissionStatus === 'denied') {
-          setSyncError('Clipboard permission denied')
+        // Skip if permission is still in prompt state and we haven't gotten it yet
+        // This gives user time to respond to the browser prompt
+        if (permissionStatus === 'prompt' || permissionStatus === null) {
+          console.log('[Clipboard Sync] Waiting for permission prompt response...')
           return
         }
 
         const clipboardText = await navigator.clipboard.readText()
-        
+
+        // Reset error count on success
+        permissionErrorCount = 0
+        setSyncError(null)
+
         // Only send if clipboard changed
         if (clipboardText !== lastClipboardValue.current && clipboardText.trim().length > 0) {
           lastClipboardValue.current = clipboardText
@@ -175,8 +196,15 @@ export function useClipboardSync(): UseClipboardSyncReturn {
       } catch (error: any) {
         // Handle permission errors gracefully
         if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-          setPermissionStatus('denied')
-          setSyncError('Clipboard permission denied. Please grant clipboard access.')
+          permissionErrorCount++
+          console.log(`[Clipboard Sync] Permission error ${permissionErrorCount}/${MAX_PERMISSION_ERRORS}`)
+
+          // Only mark as denied after multiple consecutive errors
+          // This prevents marking denied while user is still responding to prompt
+          if (permissionErrorCount >= MAX_PERMISSION_ERRORS) {
+            setPermissionStatus('denied')
+            setSyncError('Clipboard permission denied. Please grant clipboard access in browser settings.')
+          }
         } else {
           // Other errors (e.g., clipboard empty) are not critical
           console.debug('[Clipboard Sync] Clipboard read error (non-critical):', error)
@@ -249,6 +277,48 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     return unsubscribe
   }, [client, isReady])
 
+  // Request clipboard permission explicitly
+  const requestPermission = useCallback(async (): Promise<boolean> => {
+    if (!isSupported) {
+      setSyncError('Clipboard API not supported')
+      return false
+    }
+
+    try {
+      setSyncError(null)
+      // Trigger permission prompt by attempting to read clipboard
+      // This is the standard way to request clipboard permission
+      await navigator.clipboard.readText()
+
+      // If we get here, permission was granted
+      setPermissionStatus('granted')
+      setSyncError(null)
+      console.log('[Clipboard Sync] Permission granted')
+      return true
+    } catch (error: any) {
+      if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
+        // Check actual permission state - it might be 'prompt' if user dismissed
+        try {
+          const result = await navigator.permissions.query({ name: 'clipboard-read' as PermissionName })
+          setPermissionStatus(result.state)
+          if (result.state === 'denied') {
+            setSyncError('Clipboard permission denied. Please enable it in browser settings.')
+          } else if (result.state === 'prompt') {
+            setSyncError('Permission dismissed. Please try again and click Allow.')
+          }
+        } catch {
+          setPermissionStatus('denied')
+          setSyncError('Clipboard permission denied')
+        }
+        return false
+      } else {
+        // Other error (e.g., empty clipboard) - permission might still be ok
+        console.log('[Clipboard Sync] Read error but permission may be ok:', error.message)
+        return true
+      }
+    }
+  }, [isSupported])
+
   // Manual sync function
   const manualSync = useCallback(async () => {
     if (!isSupported) {
@@ -259,6 +329,10 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     try {
       setSyncError(null)
       const clipboardText = await navigator.clipboard.readText()
+
+      // Update permission status on success
+      setPermissionStatus('granted')
+
       if (clipboardText.trim().length > 0) {
         lastClipboardValue.current = clipboardText
         await sendClipboardToDevices(clipboardText)
@@ -267,7 +341,13 @@ export function useClipboardSync(): UseClipboardSyncReturn {
       }
     } catch (error: any) {
       if (error.name === 'NotAllowedError' || error.name === 'SecurityError') {
-        setPermissionStatus('denied')
+        // Re-check permission status
+        try {
+          const result = await navigator.permissions.query({ name: 'clipboard-read' as PermissionName })
+          setPermissionStatus(result.state)
+        } catch {
+          setPermissionStatus('denied')
+        }
         setSyncError('Clipboard permission denied')
       } else {
         setSyncError('Failed to read clipboard')
@@ -294,6 +374,7 @@ export function useClipboardSync(): UseClipboardSyncReturn {
     lastSyncTime,
     syncError,
     manualSync,
+    requestPermission,
     connectedDevices,
   }
 }

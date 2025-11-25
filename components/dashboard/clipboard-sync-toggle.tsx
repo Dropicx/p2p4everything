@@ -13,6 +13,7 @@ export function ClipboardSyncToggle() {
     lastSyncTime,
     syncError,
     manualSync,
+    requestPermission,
     connectedDevices,
   } = useClipboardSync()
 
@@ -96,10 +97,21 @@ export function ClipboardSyncToggle() {
               </div>
             )}
 
-            <div className="pt-2">
+            <div className="pt-2 space-y-2">
+              {permissionStatus !== 'granted' && (
+                <Button
+                  onClick={requestPermission}
+                  variant="primary"
+                  className="w-full"
+                >
+                  Grant Clipboard Permission
+                </Button>
+              )}
+
               <Button
                 onClick={manualSync}
                 disabled={permissionStatus === 'denied'}
+                variant={permissionStatus === 'granted' ? 'primary' : 'secondary'}
                 className="w-full"
               >
                 Sync Clipboard Now
@@ -108,7 +120,13 @@ export function ClipboardSyncToggle() {
 
             {permissionStatus === 'denied' && (
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                Please grant clipboard access in your browser settings to enable sync.
+                Clipboard access was denied. Please enable it in your browser settings (click the lock icon in the address bar).
+              </p>
+            )}
+
+            {permissionStatus === 'prompt' && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Click &quot;Grant Clipboard Permission&quot; and allow access when prompted by your browser.
               </p>
             )}
           </div>
