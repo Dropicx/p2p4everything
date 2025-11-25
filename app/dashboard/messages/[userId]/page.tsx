@@ -808,26 +808,22 @@ export default function ChatPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen">
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-gray-600 dark:text-gray-400">Loading chat...</p>
-        </div>
+      <div className="fixed inset-x-0 top-14 sm:top-16 bottom-0 flex items-center justify-center bg-gray-50 dark:bg-gray-900 z-40">
+        <p className="text-gray-600 dark:text-gray-400">Loading chat...</p>
       </div>
     )
   }
 
   if (!user) {
     return (
-      <div className="flex h-screen">
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-gray-600 dark:text-gray-400">User not found</p>
-        </div>
+      <div className="fixed inset-x-0 top-14 sm:top-16 bottom-0 flex items-center justify-center bg-gray-50 dark:bg-gray-900 z-40">
+        <p className="text-gray-600 dark:text-gray-400">User not found</p>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="fixed inset-x-0 top-14 sm:top-16 bottom-0 flex flex-col overflow-hidden bg-gray-50 dark:bg-gray-900 z-40">
       <DeviceRegistration />
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700 p-4">
         <div className="flex items-center gap-4">
