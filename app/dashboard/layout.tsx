@@ -7,6 +7,7 @@ import { useWebRTC } from '@/hooks/useWebRTC'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useToast, ToastContainer } from '@/components/ui/toast'
 import { EncryptionProvider } from '@/components/providers/encryption-provider'
+import { EncryptionSetup } from '@/components/encryption/encryption-setup'
 
 function DashboardContent({
   children,
@@ -188,6 +189,7 @@ function DashboardContent({
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <EncryptionSetup />
       <Navbar />
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">

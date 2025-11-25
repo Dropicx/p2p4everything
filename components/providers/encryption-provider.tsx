@@ -8,7 +8,10 @@ import { initializeEncryptedMessageStorage, migrateMessagesToEncrypted } from '@
 interface EncryptionContextValue {
   state: EncryptionState
   getMasterKey: () => CryptoKey | null
-  initializeEncryption: () => Promise<boolean>
+  /** Initialize encryption for first device with a backup password */
+  initializeEncryption: (backupPassword: string) => Promise<boolean>
+  /** Unlock encryption on a new device using the backup password */
+  unlockWithBackupPassword: (backupPassword: string) => Promise<boolean>
   isEncryptionReady: boolean
 }
 
@@ -21,16 +24,19 @@ interface EncryptionProviderProps {
 /**
  * Provider component for IndexedDB encryption
  * Wraps children with encryption context and handles initialization
+ *
+ * Encryption setup requires user interaction:
+ * - First device: User must set a backup password (initializeEncryption)
+ * - New devices: User must enter their backup password (unlockWithBackupPassword)
  */
 export function EncryptionProvider({ children }: EncryptionProviderProps) {
   const {
     state,
     getMasterKey,
     initializeEncryption,
+    unlockWithBackupPassword,
   } = useEncryption()
 
-  // Track if we're the first device and need to initialize
-  const hasAttemptedAutoInit = useRef(false)
   const hasMigrated = useRef(false)
 
   // Initialize storage encryption when master key becomes available
@@ -60,43 +66,13 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     }
   }, [state.isInitialized, getMasterKey])
 
-  // Auto-initialize for first device when setup is required
-  useEffect(() => {
-    if (state.requiresSetup && !state.isLoading && !hasAttemptedAutoInit.current) {
-      hasAttemptedAutoInit.current = true
-
-      // Retry initialization with exponential backoff
-      // Device registration may still be in progress
-      const attemptInit = async (attempt: number = 1, maxAttempts: number = 5) => {
-        console.log(`[EncryptionProvider] First device detected, initializing encryption (attempt ${attempt})...`)
-        const success = await initializeEncryption()
-
-        if (!success && attempt < maxAttempts) {
-          // Wait longer between each attempt (1s, 2s, 3s, 4s)
-          const delay = attempt * 1000
-          console.log(`[EncryptionProvider] Initialization failed, retrying in ${delay}ms...`)
-          setTimeout(() => attemptInit(attempt + 1, maxAttempts), delay)
-        }
-      }
-
-      // Initial delay to let device registration start
-      setTimeout(() => attemptInit(), 1000)
-    }
-  }, [state.requiresSetup, state.isLoading, initializeEncryption])
-
-  // Reset auto-init flag when state changes
-  useEffect(() => {
-    if (state.isInitialized) {
-      hasAttemptedAutoInit.current = false
-    }
-  }, [state.isInitialized])
-
   const isEncryptionReady = state.isInitialized && getMasterKey() !== null
 
   const value: EncryptionContextValue = {
     state,
     getMasterKey,
     initializeEncryption,
+    unlockWithBackupPassword,
     isEncryptionReady,
   }
 

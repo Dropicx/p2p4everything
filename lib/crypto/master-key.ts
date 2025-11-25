@@ -98,18 +98,23 @@ export function generateSalt(): Uint8Array {
 }
 
 /**
- * Derive backup encryption key from Clerk session token
+ * Derive backup encryption key from user-provided password
  * Uses PBKDF2 with high iteration count for security
+ *
+ * @param userPassword - User-provided password for backup encryption
+ * @param clerkUserId - Clerk user ID (adds user-specific binding)
+ * @param salt - Random salt for key derivation
  */
 export async function deriveBackupKey(
-  sessionToken: string,
+  userPassword: string,
   clerkUserId: string,
   salt: Uint8Array
 ): Promise<CryptoKey> {
   const encoder = new TextEncoder()
 
-  // Combine session token and user ID for the password
-  const password = `${sessionToken}:${clerkUserId}`
+  // Combine user password and user ID for the password
+  // This binds the backup to both the password and the specific user
+  const password = `${userPassword}:${clerkUserId}`
   const passwordBytes = encoder.encode(password)
 
   // Import password as key material

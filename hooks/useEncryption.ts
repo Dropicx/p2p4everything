@@ -20,7 +20,8 @@ export interface EncryptionState {
   isInitialized: boolean // Master key loaded and ready
   isLoading: boolean // Fetching/decrypting key
   error: string | null
-  requiresSetup: boolean // First device, needs initialization
+  requiresSetup: boolean // First device, needs initialization with backup password
+  requiresBackupPassword: boolean // New device, needs backup password to decrypt
 }
 
 interface EncryptionKeyResponse {
@@ -42,11 +43,14 @@ export function useEncryption() {
     isLoading: false,
     error: null,
     requiresSetup: false,
+    requiresBackupPassword: false,
   })
 
   // Store master key in ref (never in state or storage)
   const masterKeyRef = useRef<CryptoKey | null>(null)
   const initializationAttempted = useRef(false)
+  // Store pending backup data when new device needs password
+  const pendingBackupDataRef = useRef<{ encryptedMasterKey: string; salt: string } | null>(null)
 
   /**
    * Get the current master key (only available while logged in)
@@ -66,6 +70,7 @@ export function useEncryption() {
       isLoading: false,
       error: null,
       requiresSetup: false,
+      requiresBackupPassword: false,
     })
     initializationAttempted.current = false
   }, [])
@@ -73,10 +78,17 @@ export function useEncryption() {
   /**
    * Initialize encryption for first device
    * Generates master key, encrypts for device and backup, stores on server
+   *
+   * @param backupPassword - User-provided password to encrypt the backup key
    */
-  const initializeEncryption = useCallback(async (): Promise<boolean> => {
+  const initializeEncryption = useCallback(async (backupPassword: string): Promise<boolean> => {
     if (!userId) {
       setState((prev) => ({ ...prev, error: 'Not authenticated' }))
+      return false
+    }
+
+    if (!backupPassword || backupPassword.length < 8) {
+      setState((prev) => ({ ...prev, error: 'Backup password must be at least 8 characters' }))
       return false
     }
 
@@ -97,12 +109,6 @@ export function useEncryption() {
 
       const keyPair = await importKeyPair(storedKeyPair)
 
-      // Get session token for backup key derivation
-      const sessionToken = await getToken()
-      if (!sessionToken) {
-        throw new Error('Session token not available')
-      }
-
       // Generate new master key
       console.log('[Encryption] Generating new master key...')
       const masterKey = await generateMasterKey()
@@ -113,9 +119,9 @@ export function useEncryption() {
         keyPair.publicKey
       )
 
-      // Generate salt and derive backup key
+      // Generate salt and derive backup key from user password
       const salt = generateSalt()
-      const backupKey = await deriveBackupKey(sessionToken, userId, salt)
+      const backupKey = await deriveBackupKey(backupPassword, userId, salt)
 
       // Encrypt master key for backup
       const encryptedForBackup = await encryptMasterKeyForBackup(masterKey, backupKey)
@@ -146,6 +152,7 @@ export function useEncryption() {
         isLoading: false,
         error: null,
         requiresSetup: false,
+        requiresBackupPassword: false,
       })
 
       return true
@@ -156,22 +163,33 @@ export function useEncryption() {
         isLoading: false,
         error: error instanceof Error ? error.message : 'Unknown error',
         requiresSetup: true,
+        requiresBackupPassword: false,
       })
       return false
     }
-  }, [userId, getToken])
+  }, [userId])
 
   /**
    * Add encryption key for this device (subsequent device)
-   * Decrypts master key from backup, encrypts for this device
+   * Decrypts master key from backup using user password, encrypts for this device
+   *
+   * @param backupPassword - User-provided password to decrypt the backup key
    */
-  const addDeviceKey = useCallback(
-    async (
-      encryptedBackupKey: string,
-      backupSalt: string
-    ): Promise<boolean> => {
+  const unlockWithBackupPassword = useCallback(
+    async (backupPassword: string): Promise<boolean> => {
       if (!userId) {
         setState((prev) => ({ ...prev, error: 'Not authenticated' }))
+        return false
+      }
+
+      if (!backupPassword) {
+        setState((prev) => ({ ...prev, error: 'Backup password is required' }))
+        return false
+      }
+
+      const pendingData = pendingBackupDataRef.current
+      if (!pendingData) {
+        setState((prev) => ({ ...prev, error: 'No backup data available' }))
         return false
       }
 
@@ -192,19 +210,13 @@ export function useEncryption() {
 
         const keyPair = await importKeyPair(storedKeyPair)
 
-        // Get session token for backup key derivation
-        const sessionToken = await getToken()
-        if (!sessionToken) {
-          throw new Error('Session token not available')
-        }
-
-        // Derive backup key
-        const salt = importSalt(backupSalt)
-        const backupKey = await deriveBackupKey(sessionToken, userId, salt)
+        // Derive backup key from user password
+        const salt = importSalt(pendingData.salt)
+        const backupKey = await deriveBackupKey(backupPassword, userId, salt)
 
         // Decrypt master key from backup
         console.log('[Encryption] Decrypting master key from backup...')
-        const masterKey = await decryptMasterKeyFromBackup(encryptedBackupKey, backupKey)
+        const masterKey = await decryptMasterKeyFromBackup(pendingData.encryptedMasterKey, backupKey)
 
         // Encrypt master key for this device
         const encryptedForDevice = await encryptMasterKeyForDevice(
@@ -227,8 +239,9 @@ export function useEncryption() {
           throw new Error(error.error || 'Failed to add device key')
         }
 
-        // Store master key in memory
+        // Store master key in memory and clear pending data
         masterKeyRef.current = masterKey
+        pendingBackupDataRef.current = null
         console.log('[Encryption] Master key loaded and stored in memory')
 
         setState({
@@ -236,21 +249,29 @@ export function useEncryption() {
           isLoading: false,
           error: null,
           requiresSetup: false,
+          requiresBackupPassword: false,
         })
 
         return true
       } catch (error) {
-        console.error('[Encryption] Add device key error:', error)
+        console.error('[Encryption] Unlock with backup password error:', error)
+        // Check if it's a decryption error (wrong password)
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        const isWrongPassword = errorMessage.includes('OperationError') ||
+          errorMessage.includes('decrypt') ||
+          errorMessage.includes('Decryption failed')
+
         setState({
           isInitialized: false,
           isLoading: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: isWrongPassword ? 'Invalid backup password. Please try again.' : errorMessage,
           requiresSetup: false,
+          requiresBackupPassword: true,
         })
         return false
       }
     },
-    [userId, getToken]
+    [userId]
   )
 
   // Load encryption key on mount
@@ -300,6 +321,7 @@ export function useEncryption() {
           isLoading: false,
           error: null,
           requiresSetup: false,
+          requiresBackupPassword: false,
         })
         initializationAttempted.current = false
         return
@@ -312,6 +334,7 @@ export function useEncryption() {
           isLoading: false,
           error: null,
           requiresSetup: false,
+          requiresBackupPassword: false,
         })
         initializationAttempted.current = false
         return
@@ -336,6 +359,7 @@ export function useEncryption() {
             isLoading: false,
             error: null,
             requiresSetup: true,
+            requiresBackupPassword: false,
           })
           return
         }
@@ -349,6 +373,7 @@ export function useEncryption() {
             isLoading: false,
             error: null,
             requiresSetup: false,
+            requiresBackupPassword: false,
           })
           initializationAttempted.current = false
           return
@@ -366,57 +391,35 @@ export function useEncryption() {
           )
           masterKeyRef.current = masterKey
           console.log('[Encryption] Master key loaded from device key')
-        } else if (data.keyType === 'backup' && data.salt) {
-          // Need to decrypt from backup and create device key
-          console.log('[Encryption] Decrypting master key from backup...')
 
-          // Get session token
-          const sessionToken = await getToken()
-          if (!sessionToken) {
-            throw new Error('Session token not available')
-          }
-
-          // Derive backup key and decrypt
-          const salt = importSalt(data.salt)
-          // userId is guaranteed to be non-null here due to earlier check
-          const backupKey = await deriveBackupKey(sessionToken, userId!, salt)
-          const masterKey = await decryptMasterKeyFromBackup(
-            data.encryptedMasterKey,
-            backupKey
-          )
-
-          // Encrypt for this device and store
-          const encryptedForDevice = await encryptMasterKeyForDevice(
-            masterKey,
-            keyPair.publicKey
-          )
-
-          // Add device key to server
-          const addDeviceResponse = await fetch('/api/users/encryption-key/add-device', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              deviceId,
-              encryptedMasterKey: encryptedForDevice,
-            }),
+          setState({
+            isInitialized: true,
+            isLoading: false,
+            error: null,
+            requiresSetup: false,
+            requiresBackupPassword: false,
           })
+        } else if (data.keyType === 'backup' && data.salt) {
+          // This is a new device - need user's backup password to decrypt
+          // Store the backup data for later use when user provides password
+          console.log('[Encryption] New device detected, backup password required')
 
-          if (!addDeviceResponse.ok) {
-            console.warn('[Encryption] Failed to store device key, will retry next time')
+          // Store backup data in ref for later use
+          pendingBackupDataRef.current = {
+            encryptedMasterKey: data.encryptedMasterKey,
+            salt: data.salt,
           }
 
-          masterKeyRef.current = masterKey
-          console.log('[Encryption] Master key loaded from backup and device key created')
+          setState({
+            isInitialized: false,
+            isLoading: false,
+            error: null,
+            requiresSetup: false,
+            requiresBackupPassword: true,
+          })
         } else {
           throw new Error('Invalid encryption key data')
         }
-
-        setState({
-          isInitialized: true,
-          isLoading: false,
-          error: null,
-          requiresSetup: false,
-        })
       } catch (error) {
         console.error('[Encryption] Error loading encryption key:', error)
         setState({
@@ -424,6 +427,7 @@ export function useEncryption() {
           isLoading: false,
           error: error instanceof Error ? error.message : 'Unknown error',
           requiresSetup: false,
+          requiresBackupPassword: false,
         })
       }
     }
@@ -431,13 +435,13 @@ export function useEncryption() {
     // Small delay to ensure device registration has completed
     const timeout = setTimeout(loadEncryptionKey, 500)
     return () => clearTimeout(timeout)
-  }, [userId, isLoaded, getToken, clearMasterKey])
+  }, [userId, isLoaded, clearMasterKey])
 
   return {
     state,
     getMasterKey,
     clearMasterKey,
     initializeEncryption,
-    addDeviceKey,
+    unlockWithBackupPassword,
   }
 }
