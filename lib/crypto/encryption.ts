@@ -200,6 +200,15 @@ export async function encryptHybridMultiDevice(
 
   for (const { deviceId, publicKey } of deviceKeys) {
     try {
+      // Log public key fingerprint for debugging
+      try {
+        const publicKeyJwk = await crypto.subtle.exportKey('jwk', publicKey)
+        const nFingerprint = (publicKeyJwk.n as string)?.substring(0, 32) || 'unknown'
+        console.log(`[EncryptMultiDevice] Device ${deviceId} public key fingerprint (n prefix):`, nFingerprint)
+      } catch (e) {
+        console.log(`[EncryptMultiDevice] Could not export public key for device ${deviceId}`)
+      }
+
       const encryptedKey = await encryptAsymmetric(keyString, publicKey)
       encryptedKeys.push({ deviceId, encryptedKey })
       console.log(`[EncryptMultiDevice] Encrypted key for device ${deviceId}`)
@@ -302,6 +311,17 @@ export async function decryptMessage(
 ): Promise<string> {
   try {
     console.log('[Decrypt] Starting decryption, encrypted message length:', encryptedMessage.length)
+
+    // Log private key fingerprint for debugging
+    try {
+      const privateKeyJwk = await crypto.subtle.exportKey('jwk', recipientPrivateKey)
+      // Use n (modulus) as a fingerprint identifier - just first 32 chars
+      const nFingerprint = (privateKeyJwk.n as string)?.substring(0, 32) || 'unknown'
+      console.log('[Decrypt] Private key fingerprint (n prefix):', nFingerprint)
+    } catch (e) {
+      console.log('[Decrypt] Could not export private key for fingerprint')
+    }
+
     const parsed = JSON.parse(encryptedMessage)
 
     // Check if this is multi-device format (has encryptedKeys array)

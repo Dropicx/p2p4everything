@@ -154,35 +154,63 @@ export function useDeviceRegistration() {
 
               if (serverDevice) {
                 // Device exists on server
-                // IMPORTANT: Migrate device ID if localStorage has old format
-                const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
-                const newDeviceId = serverDevice.id
+                // IMPORTANT: Verify that server's public key matches our local key
+                const localPublicKey = await importPublicKey(storedKeyPair.publicKey)
+                const localPublicKeyString = await exportPublicKey(localPublicKey)
 
-                if (oldDeviceId && oldDeviceId !== newDeviceId) {
-                  console.log('[Device Registration] Migrating device ID from', oldDeviceId, 'to', newDeviceId)
-
-                  // Migrate the key pair to the new device ID
-                  const storedKeys = await getKeyPair(oldDeviceId)
-                  if (storedKeys) {
-                    await storeKeyPair(newDeviceId, storedKeys)
-                    console.log('[Device Registration] Migrated key pair to new device ID')
+                let keysMatch = false
+                if (serverDevice.publicKey && typeof serverDevice.publicKey === 'string' && serverDevice.publicKey.trim()) {
+                  try {
+                    const serverParsedKey = JSON.parse(serverDevice.publicKey)
+                    const localParsedKey = JSON.parse(localPublicKeyString)
+                    keysMatch = serverParsedKey.n === localParsedKey.n
+                    console.log('[Device Registration] Quick key verification:', {
+                      keysMatch,
+                      serverKeyPrefix: serverParsedKey.n?.substring(0, 32),
+                      localKeyPrefix: localParsedKey.n?.substring(0, 32),
+                    })
+                  } catch (e) {
+                    console.error('[Device Registration] Error comparing keys in quick check:', e)
+                    keysMatch = false
                   }
-
-                  // Update localStorage with the server's device ID
-                  localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
                 }
 
-                // Load state
-                const publicKey = await importPublicKey(storedKeyPair.publicKey)
-                const fingerprint = await getKeyFingerprint(publicKey)
-                setState({
-                  deviceId: serverDevice.id,
-                  isRegistered: true,
-                  isRegistering: false,
-                  error: null,
-                  publicKeyFingerprint: fingerprint,
-                })
-                return
+                if (!keysMatch) {
+                  // Keys don't match - need to re-register to update server
+                  console.log('[Device Registration] Keys do not match server, need to re-register...')
+                  localStorage.removeItem(DEVICE_REGISTERED_KEY)
+                  // Don't return - fall through to full registration flow
+                } else {
+                  // Keys match - proceed with migration if needed
+                  // IMPORTANT: Migrate device ID if localStorage has old format
+                  const oldDeviceId = localStorage.getItem(DEVICE_ID_KEY)
+                  const newDeviceId = serverDevice.id
+
+                  if (oldDeviceId && oldDeviceId !== newDeviceId) {
+                    console.log('[Device Registration] Migrating device ID from', oldDeviceId, 'to', newDeviceId)
+
+                    // Migrate the key pair to the new device ID
+                    const storedKeys = await getKeyPair(oldDeviceId)
+                    if (storedKeys) {
+                      await storeKeyPair(newDeviceId, storedKeys)
+                      console.log('[Device Registration] Migrated key pair to new device ID')
+                    }
+
+                    // Update localStorage with the server's device ID
+                    localStorage.setItem(DEVICE_ID_KEY, newDeviceId)
+                  }
+
+                  // Load state
+                  const fingerprint = await getKeyFingerprint(localPublicKey)
+                  setState({
+                    deviceId: serverDevice.id,
+                    isRegistered: true,
+                    isRegistering: false,
+                    error: null,
+                    publicKeyFingerprint: fingerprint,
+                  })
+                  return
+                }
               } else {
                 // Device not on server, clear flag and re-register
                 console.log('[Device Registration] Device marked as registered but not found on server, re-registering...')
@@ -221,6 +249,15 @@ export function useDeviceRegistration() {
           // Export public key for registration
           publicKeyString = await exportPublicKey(keyPair.publicKey)
           keysWereFreshlyGenerated = true
+
+          // Log key fingerprint for debugging
+          try {
+            const parsedKey = JSON.parse(publicKeyString)
+            const nFingerprint = (parsedKey.n as string)?.substring(0, 32) || 'unknown'
+            console.log('[Device Registration] Generated new keys, fingerprint (n prefix):', nFingerprint)
+          } catch (e) {
+            console.log('[Device Registration] Could not parse generated public key for fingerprint')
+          }
         } else {
           // Retrieve existing keys
           const stored = await getKeyPair(deviceId)
@@ -232,6 +269,15 @@ export function useDeviceRegistration() {
           const { importPublicKey } = await import('@/lib/crypto/keys')
           const publicKey = await importPublicKey(stored.publicKey)
           publicKeyString = await exportPublicKey(publicKey)
+
+          // Log key fingerprint for debugging
+          try {
+            const parsedKey = JSON.parse(publicKeyString)
+            const nFingerprint = (parsedKey.n as string)?.substring(0, 32) || 'unknown'
+            console.log('[Device Registration] Loaded existing keys, fingerprint (n prefix):', nFingerprint)
+          } catch (e) {
+            console.log('[Device Registration] Could not parse loaded public key for fingerprint')
+          }
         }
 
         // Check if device is already registered on server
@@ -316,6 +362,15 @@ export function useDeviceRegistration() {
           // Register device on server
           // Add retry logic for auth timing issues
           console.log('[Device Registration] Registering new device with public key length:', publicKeyString.length)
+
+          // Log public key fingerprint for debugging
+          try {
+            const parsedKey = JSON.parse(publicKeyString)
+            const nFingerprint = (parsedKey.n as string)?.substring(0, 32) || 'unknown'
+            console.log('[Device Registration] Public key fingerprint (n prefix):', nFingerprint)
+          } catch (e) {
+            console.log('[Device Registration] Could not parse public key for fingerprint')
+          }
           
           let registerResponse: Response | null = null
           let retries = 3
@@ -453,18 +508,43 @@ export function useDeviceRegistration() {
             publicKeyType: typeof existingDevice.publicKey,
             publicKeyLength: existingDevice.publicKey?.length || 0,
           })
-          
+
+          // Check if server's public key matches our local public key
+          // This is CRITICAL - if they don't match, we can't decrypt messages
+          let serverPublicKeyMatches = false
+          if (existingDevice.publicKey && typeof existingDevice.publicKey === 'string' && existingDevice.publicKey.trim()) {
+            try {
+              const serverParsedKey = JSON.parse(existingDevice.publicKey)
+              const localParsedKey = JSON.parse(publicKeyString)
+              // Compare the modulus (n) to verify it's the same key
+              serverPublicKeyMatches = serverParsedKey.n === localParsedKey.n
+              console.log('[Device Registration] Key comparison:', {
+                serverKeyModulusPrefix: serverParsedKey.n?.substring(0, 32),
+                localKeyModulusPrefix: localParsedKey.n?.substring(0, 32),
+                keysMatch: serverPublicKeyMatches,
+              })
+            } catch (e) {
+              console.error('[Device Registration] Error comparing keys:', e)
+              serverPublicKeyMatches = false
+            }
+          }
+
           // Check if server needs public key update:
           // 1. Device has no public key on server, OR
-          // 2. We just generated fresh local keys (e.g., user cleared cache)
+          // 2. We just generated fresh local keys (e.g., user cleared cache), OR
+          // 3. Server's public key doesn't match our local key (key mismatch!)
           const serverHasNoKey = !existingDevice.publicKey ||
             (typeof existingDevice.publicKey === 'string' && existingDevice.publicKey.trim() === '')
-          const needsUpdate = serverHasNoKey || keysWereFreshlyGenerated
+          const needsUpdate = serverHasNoKey || keysWereFreshlyGenerated || !serverPublicKeyMatches
 
           if (needsUpdate) {
             console.log('[Device Registration] Updating server public key:', {
               serverHasNoKey,
               keysWereFreshlyGenerated,
+              serverPublicKeyMatches,
+              reason: serverHasNoKey ? 'server has no key' :
+                      keysWereFreshlyGenerated ? 'keys were freshly generated' :
+                      !serverPublicKeyMatches ? 'keys do not match' : 'unknown',
             })
             // Update device with public key
             try {
@@ -481,7 +561,7 @@ export function useDeviceRegistration() {
               if (!updateResponse.ok) {
                 const contentType = updateResponse.headers.get('content-type')
                 let errorMessage = 'Failed to update device public key'
-                
+
                 if (contentType && contentType.includes('application/json')) {
                   try {
                     const error = await updateResponse.json()
@@ -492,16 +572,24 @@ export function useDeviceRegistration() {
                 } else {
                   errorMessage = `Server error (${updateResponse.status}): ${updateResponse.statusText}`
                 }
-                
+
                 console.warn('[Device Registration] Failed to update device public key:', errorMessage)
+                // If we couldn't update the key and keys don't match, this is a critical error
+                if (!serverPublicKeyMatches) {
+                  throw new Error('Critical: Local encryption keys do not match server, and update failed. Message decryption will fail.')
+                }
               } else {
                 console.log('[Device Registration] Successfully updated device public key')
               }
             } catch (updateError) {
               console.error('[Device Registration] Error updating device public key:', updateError)
+              // Re-throw if it's our critical error
+              if (updateError instanceof Error && updateError.message.includes('Critical:')) {
+                throw updateError
+              }
             }
           } else {
-            console.log('[Device Registration] Device already has public key, skipping update')
+            console.log('[Device Registration] Device already has matching public key, skipping update')
           }
 
           // IMPORTANT: Update localStorage with the server's device ID (UUID)
