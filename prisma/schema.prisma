@@ -113,7 +113,7 @@ model UserEncryptionKey {
   id                 String   @id @default(uuid())
   userId             String
   user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceId           String?  @unique // null for backup keys
+  deviceId           String?  @unique // null for backup keys, unique ensures one key per device
   device             Device?  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   encryptedMasterKey String   @db.Text // Base64-encoded encrypted key
   keyType            String   // 'device' | 'backup'
@@ -121,7 +121,9 @@ model UserEncryptionKey {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  @@unique([userId, keyType]) // One backup key per user
+  // Note: For device keys, uniqueness is enforced by deviceId @unique
+  // For backup keys, we enforce one per user in application logic (initialize endpoint)
   @@index([userId])
+  @@index([userId, keyType]) // For efficient lookups
 }
 
