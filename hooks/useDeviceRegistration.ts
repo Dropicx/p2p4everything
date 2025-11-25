@@ -115,6 +115,10 @@ export function useDeviceRegistration() {
     }
 
     async function registerDevice() {
+      // Set registration flag IMMEDIATELY to prevent race conditions
+      // This must be the first thing we do before any async operations
+      registrationInProgress.current = true
+
       // Check browser capabilities first
       if (!window.crypto || !window.crypto.subtle) {
         setState((prev) => ({
@@ -122,6 +126,7 @@ export function useDeviceRegistration() {
           isRegistering: false,
           error: 'Web Crypto API is not available in this browser. Please use a modern browser.',
         }))
+        registrationInProgress.current = false
         return
       }
 
@@ -131,6 +136,7 @@ export function useDeviceRegistration() {
           isRegistering: false,
           error: 'IndexedDB is not available in this browser. Please use a modern browser.',
         }))
+        registrationInProgress.current = false
         return
       }
 
@@ -271,7 +277,6 @@ export function useDeviceRegistration() {
         }
       }
 
-      registrationInProgress.current = true
       const deviceId = getDeviceId()
       setState((prev) => ({ ...prev, deviceId, isRegistering: true, error: null }))
 
