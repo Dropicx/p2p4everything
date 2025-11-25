@@ -36,14 +36,15 @@ model User {
 }
 
 model Device {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deviceName  String
-  deviceType  String   // web, mobile, desktop
-  publicKey   String   @db.Text // E2E encryption public key
-  lastSeen    DateTime @default(now())
-  createdAt   DateTime @default(now())
+  id                  String   @id @default(uuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceName          String
+  deviceType          String   // web, mobile, desktop
+  publicKey           String   @db.Text // E2E encryption public key
+  clipboardSyncEnabled Boolean  @default(false) // Per-device clipboard sync preference
+  lastSeen            DateTime @default(now())
+  createdAt           DateTime @default(now())
 
   fileAds     FileAdvertisement[]
 

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { db } from '@/lib/db'
 import { KeyFingerprint } from '@/components/dashboard/key-fingerprint'
+import { ClipboardSyncToggle } from '@/components/dashboard/clipboard-sync-toggle'
 
 export default async function SettingsPage() {
   const { userId } = await auth()
@@ -84,6 +85,8 @@ export default async function SettingsPage() {
             </div>
           </div>
         </Card>
+
+        <ClipboardSyncToggle />
       </div>
     </div>
   )

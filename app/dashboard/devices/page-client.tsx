@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import Link from 'next/link'
 
 interface Device {
   id: string
@@ -68,6 +69,17 @@ export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
           </div>
         ) : (
           <div className="space-y-4">
+            {deviceList.length > 1 && (
+              <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg mb-4">
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  💡 You have {deviceList.length} devices. Enable{' '}
+                  <Link href="/dashboard/settings" className="underline font-medium">
+                    clipboard sync
+                  </Link>{' '}
+                  to automatically share clipboard text across all your devices.
+                </p>
+              </div>
+            )}
             {deviceList.map((device) => (
               <div
                 key={device.id}

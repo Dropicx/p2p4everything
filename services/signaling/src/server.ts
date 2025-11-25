@@ -322,6 +322,9 @@ function handleMessage(connectionId: string, message: any, ws: WebSocket) {
     case 'get-peers':
       handleGetPeers(connectionId, message.roomId, ws)
       break
+    case 'clipboard-sync':
+      handleClipboardSync(connectionId, message, connInfo)
+      break
     default:
       console.warn(`Unknown message type: ${message.type}`)
       ws.send(JSON.stringify({
@@ -456,6 +459,65 @@ function handleGetPeers(connectionId: string, roomId: string, ws: WebSocket) {
     roomId,
     peers,
   }))
+}
+
+// Clipboard sync message handling
+function handleClipboardSync(connectionId: string, message: any, connInfo: ConnectionInfo | undefined) {
+  // Ensure user is authenticated
+  if (!connInfo?.databaseUserId) {
+    const senderConn = connections.get(connectionId)
+    if (senderConn) {
+      senderConn.ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Must be authenticated to send clipboard sync messages',
+        originalType: message.type,
+      }))
+    }
+    console.warn(`Clipboard sync rejected from unauthenticated connection: ${connectionId}`)
+    return
+  }
+
+  const { encryptedData, fromDeviceId, toDeviceId } = message
+  const senderUserId = connInfo.databaseUserId
+
+  // Get all connections for the same user (excluding sender)
+  const userConns = userConnections.get(senderUserId)
+  if (!userConns || userConns.size <= 1) {
+    // Only sender is connected, no other devices to sync to
+    console.log(`[Clipboard Sync] No other devices connected for user ${senderUserId}`)
+    return
+  }
+
+  const messagePayload = {
+    type: 'clipboard-sync',
+    fromConnectionId: connectionId,
+    fromDeviceId: fromDeviceId || connInfo.deviceId,
+    fromUserId: senderUserId,
+    encryptedData,
+    timestamp: Date.now(),
+  }
+
+  let sentCount = 0
+  userConns.forEach((connId) => {
+    if (connId !== connectionId) {
+      const targetConn = connections.get(connId)
+      if (targetConn) {
+        // If toDeviceId is specified, only send to that device
+        if (toDeviceId && targetConn.deviceId !== toDeviceId) {
+          return
+        }
+
+        // Send clipboard sync to this device
+        targetConn.ws.send(JSON.stringify({
+          ...messagePayload,
+          toDeviceId: targetConn.deviceId,
+        }))
+        sentCount++
+      }
+    }
+  })
+
+  console.log(`[Clipboard Sync] Sent clipboard sync from device ${fromDeviceId} to ${sentCount} device(s) for user ${senderUserId}`)
 }
 
 // Signaling message forwarding

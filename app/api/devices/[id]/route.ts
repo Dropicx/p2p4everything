@@ -6,6 +6,7 @@ import { z } from 'zod'
 const updateDeviceSchema = z.object({
   publicKey: z.string().min(1).optional(),
   deviceName: z.string().min(1).max(100).optional(),
+  clipboardSyncEnabled: z.boolean().optional(),
 })
 
 export async function PATCH(
@@ -47,6 +48,7 @@ export async function PATCH(
       data: {
         ...(validatedData.publicKey && { publicKey: validatedData.publicKey }),
         ...(validatedData.deviceName && { deviceName: validatedData.deviceName }),
+        ...(validatedData.clipboardSyncEnabled !== undefined && { clipboardSyncEnabled: validatedData.clipboardSyncEnabled }),
         lastSeen: new Date(),
       },
     })

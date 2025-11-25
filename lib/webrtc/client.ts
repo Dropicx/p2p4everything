@@ -434,5 +434,17 @@ export class WebRTCClient {
     const peer = this.peerConnections.get(userId)
     return peer ? peer.getConnectionState() : null
   }
+
+  /**
+   * Send clipboard sync message via signaling server
+   * This will be routed to all devices of the same user
+   */
+  sendClipboardSync(encryptedData: string, toDeviceId?: string): void {
+    if (!this.config.deviceId) {
+      console.warn('[WebRTC Client] Cannot send clipboard sync: deviceId not set')
+      return
+    }
+    this.signaling.sendClipboardSync(encryptedData, this.config.deviceId, toDeviceId)
+  }
 }
 

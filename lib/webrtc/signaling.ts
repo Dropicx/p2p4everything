@@ -16,6 +16,7 @@ export type SignalingMessage =
   | { type: 'connection-accepted'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'connection-rejected'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'connection-removed'; fromUserId: string; connectionId: string; timestamp: number }
+  | { type: 'clipboard-sync'; fromConnectionId: string; fromDeviceId: string; fromUserId: string; toDeviceId?: string; encryptedData: string; timestamp: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 
@@ -215,6 +216,24 @@ export class SignalingClient {
       targetConnectionId,
       targetUserId,
       roomId,
+    })
+  }
+
+  /**
+   * Send clipboard sync message
+   * This will be routed to all devices of the same user (via signaling server)
+   */
+  sendClipboardSync(
+    encryptedData: string,
+    fromDeviceId: string,
+    toDeviceId?: string
+  ): void {
+    this.send({
+      type: 'clipboard-sync',
+      encryptedData,
+      fromDeviceId,
+      toDeviceId,
+      timestamp: Date.now(),
     })
   }
 
