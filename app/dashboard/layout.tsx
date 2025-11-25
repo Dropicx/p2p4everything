@@ -189,56 +189,6 @@ export default function DashboardLayout({
       <ToastContainer toasts={toasts} onRemove={removeToast} />
       <Navbar />
 
-      {/* Notification Debug Panel */}
-      {isSupported && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800 p-4">
-          <div className="max-w-7xl mx-auto">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-                  Browser Notifications:
-                </span>
-                <span className={`text-sm px-2 py-1 rounded ${
-                  permission === 'granted'
-                    ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
-                    : permission === 'denied'
-                    ? 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200'
-                    : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-200'
-                }`}>
-                  {permission === 'granted' ? '✓ Enabled' : permission === 'denied' ? '✗ Blocked' : '? Not Set'}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {permission !== 'granted' && (
-                  <button
-                    onClick={requestPermission}
-                    className="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-                  >
-                    Enable Notifications
-                  </button>
-                )}
-                {permission === 'granted' && (
-                  <button
-                    onClick={() => {
-                      showNotification({
-                        title: 'Test Notification',
-                        body: 'This is a test notification from p2p4everything',
-                        onClick: () => {
-                          console.log('[Dashboard] Test notification clicked')
-                        },
-                      })
-                    }}
-                    className="px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition-colors"
-                  >
-                    Test Notification
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         {children}
       </main>

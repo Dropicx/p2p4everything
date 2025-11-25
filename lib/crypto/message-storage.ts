@@ -390,3 +390,42 @@ export async function getAllUnreadCounts(): Promise<Map<string, number>> {
     }
   })
 }
+
+/**
+ * Get unread message counts keyed by sender user ID
+ * This is useful for showing unread indicators per contact
+ */
+export async function getUnreadCounts(): Promise<Record<string, number>> {
+  const db = await openDatabase()
+
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.openCursor()
+    const unreadCounts: Record<string, number> = {}
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        const message = cursor.value as StoredMessage
+        // Count received messages that haven't been read, keyed by sender
+        if (!message.isSent && !message.isRead) {
+          const senderId = message.senderId
+          unreadCounts[senderId] = (unreadCounts[senderId] || 0) + 1
+        }
+        cursor.continue()
+      } else {
+        resolve(unreadCounts)
+      }
+    }
+
+    request.onerror = () => {
+      reject(new Error(`Failed to get unread counts: ${request.error}`))
+    }
+
+    transaction.oncomplete = () => {
+      db.close()
+    }
+  })
+}

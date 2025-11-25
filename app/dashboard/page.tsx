@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { db } from '@/lib/db'
 import { DeviceRegistration } from '@/components/dashboard/device-registration'
+import { DashboardWidgets } from '@/components/dashboard/dashboard-widgets'
 
 export default async function DashboardPage() {
   const { userId } = await auth()
@@ -70,6 +71,11 @@ export default async function DashboardPage() {
             All systems operational
           </p>
         </Card>
+      </div>
+
+      {/* Quick Access Widgets */}
+      <div className="mt-6 sm:mt-8">
+        <DashboardWidgets />
       </div>
 
       {dbUser?.devices && dbUser.devices.length > 0 && (
