@@ -9,7 +9,7 @@ import {
   importPublicKey,
   getKeyFingerprint,
 } from '@/lib/crypto/keys'
-import { storeKeyPair, getKeyPair, hasKeyPair } from '@/lib/crypto/storage'
+import { storeKeyPair, getKeyPair, hasKeyPair, isKeyStorageEncryptionAvailable } from '@/lib/crypto/storage'
 
 interface DeviceRegistrationState {
   deviceId: string | null
@@ -17,6 +17,7 @@ interface DeviceRegistrationState {
   isRegistering: boolean
   error: string | null
   publicKeyFingerprint: string | null
+  waitingForEncryption: boolean // True when keys exist but encrypted and waiting for master key
 }
 
 const DEVICE_ID_KEY = 'p2p4everything-device-id'
@@ -103,8 +104,36 @@ export function useDeviceRegistration() {
     isRegistering: false,
     error: null,
     publicKeyFingerprint: null,
+    waitingForEncryption: false,
   })
   const registrationInProgress = useRef(false)
+
+  // Track encryption availability for retry
+  const [encryptionAvailable, setEncryptionAvailable] = useState(isKeyStorageEncryptionAvailable())
+
+  // Poll for encryption availability when waiting
+  useEffect(() => {
+    if (!state.waitingForEncryption) return
+
+    const checkEncryption = () => {
+      const available = isKeyStorageEncryptionAvailable()
+      if (available) {
+        console.log('[Device Registration] Encryption now available, will retry registration')
+        // Reset waiting state and trigger re-registration
+        setState((prev) => ({
+          ...prev,
+          waitingForEncryption: false,
+        }))
+        setEncryptionAvailable(true)
+      }
+    }
+
+    // Check immediately and then poll
+    checkEncryption()
+    const interval = setInterval(checkEncryption, 500)
+
+    return () => clearInterval(interval)
+  }, [state.waitingForEncryption])
 
   useEffect(() => {
     // Wait for Clerk to be fully loaded AND have a session
@@ -235,6 +264,7 @@ export function useDeviceRegistration() {
                         isRegistering: false,
                         error: null,
                         publicKeyFingerprint: fingerprint,
+                        waitingForEncryption: false,
                       })
                       globalRegistrationLock = false
                       registrationInProgress.current = false
@@ -275,6 +305,7 @@ export function useDeviceRegistration() {
                     isRegistering: false,
                     error: null,
                     publicKeyFingerprint: fingerprint,
+                    waitingForEncryption: false,
                   })
                   globalRegistrationLock = false
                   registrationInProgress.current = false
@@ -330,6 +361,23 @@ export function useDeviceRegistration() {
           // Retrieve existing keys
           const stored = await getKeyPair(deviceId)
           if (!stored) {
+            // Keys exist but can't be decrypted - likely waiting for master key
+            // Check if keys are encrypted by checking hasKeyPair
+            const keysExist = await hasKeyPair(deviceId)
+            if (keysExist) {
+              // Keys are encrypted, waiting for master key to unlock
+              // Don't throw error - just wait for encryption to be unlocked
+              console.log('[Device Registration] Keys are encrypted, waiting for master key. Will retry after encryption is unlocked.')
+              setState((prev) => ({
+                ...prev,
+                isRegistering: false,
+                error: null, // Not an error, just waiting
+                waitingForEncryption: true,
+              }))
+              globalRegistrationLock = false
+              registrationInProgress.current = false
+              return
+            }
             throw new Error('Failed to retrieve stored keys')
           }
 
@@ -566,6 +614,7 @@ export function useDeviceRegistration() {
             isRegistering: false,
             error: null,
             publicKeyFingerprint: fingerprint,
+            waitingForEncryption: false,
           })
         } else {
           // Device already registered
@@ -691,6 +740,7 @@ export function useDeviceRegistration() {
             isRegistering: false,
             error: null,
             publicKeyFingerprint: fingerprint,
+            waitingForEncryption: false,
           })
 
           // Update lastSeen (optional, can be done periodically)
@@ -740,7 +790,7 @@ export function useDeviceRegistration() {
     }, 5 * 60 * 1000) // 5 minutes
 
     return () => clearInterval(interval)
-  }, [userId, isLoaded, sessionId, state.isRegistered])
+  }, [userId, isLoaded, sessionId, state.isRegistered, encryptionAvailable])
 
   return state
 }
