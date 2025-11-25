@@ -64,8 +64,23 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
   useEffect(() => {
     if (state.requiresSetup && !state.isLoading && !hasAttemptedAutoInit.current) {
       hasAttemptedAutoInit.current = true
-      console.log('[EncryptionProvider] First device detected, initializing encryption...')
-      initializeEncryption()
+
+      // Retry initialization with exponential backoff
+      // Device registration may still be in progress
+      const attemptInit = async (attempt: number = 1, maxAttempts: number = 5) => {
+        console.log(`[EncryptionProvider] First device detected, initializing encryption (attempt ${attempt})...`)
+        const success = await initializeEncryption()
+
+        if (!success && attempt < maxAttempts) {
+          // Wait longer between each attempt (1s, 2s, 3s, 4s)
+          const delay = attempt * 1000
+          console.log(`[EncryptionProvider] Initialization failed, retrying in ${delay}ms...`)
+          setTimeout(() => attemptInit(attempt + 1, maxAttempts), delay)
+        }
+      }
+
+      // Initial delay to let device registration start
+      setTimeout(() => attemptInit(), 1000)
     }
   }, [state.requiresSetup, state.isLoading, initializeEncryption])
 
