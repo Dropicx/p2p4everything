@@ -54,18 +54,29 @@ export async function decryptAsymmetric(
   encryptedData: string,
   privateKey: CryptoKey
 ): Promise<string> {
-  const encryptedBuffer = base64ToArrayBuffer(encryptedData)
+  try {
+    console.log('[DecryptAsym] Starting RSA decryption, input length:', encryptedData.length)
+    const encryptedBuffer = base64ToArrayBuffer(encryptedData)
+    console.log('[DecryptAsym] Converted to buffer, size:', encryptedBuffer.byteLength)
 
-  const decrypted = await crypto.subtle.decrypt(
-    {
-      name: ASYMMETRIC_ALGORITHM,
-    },
-    privateKey,
-    encryptedBuffer
-  )
+    console.log('[DecryptAsym] Calling crypto.subtle.decrypt...')
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: ASYMMETRIC_ALGORITHM,
+      },
+      privateKey,
+      encryptedBuffer
+    )
+    console.log('[DecryptAsym] Decrypted buffer size:', decrypted.byteLength)
 
-  const decoder = new TextDecoder()
-  return decoder.decode(decrypted)
+    const decoder = new TextDecoder()
+    const result = decoder.decode(decrypted)
+    console.log('[DecryptAsym] Decoded to string, length:', result.length)
+    return result
+  } catch (error) {
+    console.error('[DecryptAsym] RSA decryption failed:', error)
+    throw error
+  }
 }
 
 /**
@@ -105,21 +116,37 @@ export async function decryptSymmetric(
   iv: string,
   key: CryptoKey
 ): Promise<string> {
-  const encryptedBuffer = base64ToArrayBuffer(encryptedData)
-  const ivBuffer = base64ToArrayBuffer(iv)
+  try {
+    console.log('[DecryptSym] Starting AES-GCM decryption')
+    console.log('[DecryptSym] Encrypted data length:', encryptedData.length)
+    console.log('[DecryptSym] IV length:', iv.length)
 
-  const decrypted = await crypto.subtle.decrypt(
-    {
-      name: SYMMETRIC_ALGORITHM,
-      iv: ivBuffer,
-      tagLength: TAG_LENGTH,
-    },
-    key,
-    encryptedBuffer
-  )
+    const encryptedBuffer = base64ToArrayBuffer(encryptedData)
+    console.log('[DecryptSym] Encrypted buffer size:', encryptedBuffer.byteLength)
 
-  const decoder = new TextDecoder()
-  return decoder.decode(decrypted)
+    const ivBuffer = base64ToArrayBuffer(iv)
+    console.log('[DecryptSym] IV buffer size:', ivBuffer.byteLength)
+
+    console.log('[DecryptSym] Calling crypto.subtle.decrypt...')
+    const decrypted = await crypto.subtle.decrypt(
+      {
+        name: SYMMETRIC_ALGORITHM,
+        iv: ivBuffer,
+        tagLength: TAG_LENGTH,
+      },
+      key,
+      encryptedBuffer
+    )
+    console.log('[DecryptSym] Decrypted buffer size:', decrypted.byteLength)
+
+    const decoder = new TextDecoder()
+    const result = decoder.decode(decrypted)
+    console.log('[DecryptSym] Decoded string length:', result.length)
+    return result
+  } catch (error) {
+    console.error('[DecryptSym] AES-GCM decryption failed:', error)
+    throw error
+  }
 }
 
 /**
@@ -157,24 +184,41 @@ export async function decryptHybrid(
   iv: string,
   recipientPrivateKey: CryptoKey
 ): Promise<string> {
-  // Decrypt the symmetric key
-  const keyString = await decryptAsymmetric(encryptedKey, recipientPrivateKey)
-  const keyBuffer = base64ToArrayBuffer(keyString)
+  try {
+    console.log('[DecryptHybrid] Starting hybrid decryption')
 
-  // Import the symmetric key
-  const sessionKey = await crypto.subtle.importKey(
-    'raw',
-    keyBuffer,
-    {
-      name: SYMMETRIC_ALGORITHM,
-      length: KEY_LENGTH,
-    },
-    true,
-    ['decrypt']
-  )
+    // Decrypt the symmetric key
+    console.log('[DecryptHybrid] Decrypting symmetric key with RSA...')
+    const keyString = await decryptAsymmetric(encryptedKey, recipientPrivateKey)
+    console.log('[DecryptHybrid] RSA decryption successful, keyString length:', keyString.length)
 
-  // Decrypt the data
-  return decryptSymmetric(encryptedData, iv, sessionKey)
+    console.log('[DecryptHybrid] Converting base64 to ArrayBuffer...')
+    const keyBuffer = base64ToArrayBuffer(keyString)
+    console.log('[DecryptHybrid] keyBuffer byteLength:', keyBuffer.byteLength)
+
+    // Import the symmetric key
+    console.log('[DecryptHybrid] Importing symmetric key...')
+    const sessionKey = await crypto.subtle.importKey(
+      'raw',
+      keyBuffer,
+      {
+        name: SYMMETRIC_ALGORITHM,
+        length: KEY_LENGTH,
+      },
+      true,
+      ['decrypt']
+    )
+    console.log('[DecryptHybrid] Symmetric key imported successfully')
+
+    // Decrypt the data
+    console.log('[DecryptHybrid] Decrypting data with AES-GCM...')
+    const result = await decryptSymmetric(encryptedData, iv, sessionKey)
+    console.log('[DecryptHybrid] AES decryption successful')
+    return result
+  } catch (error) {
+    console.error('[DecryptHybrid] Error during hybrid decryption:', error)
+    throw error
+  }
 }
 
 /**
@@ -195,35 +239,74 @@ export async function decryptMessage(
   encryptedMessage: string,
   recipientPrivateKey: CryptoKey
 ): Promise<string> {
-  const { encryptedKey, encryptedData, iv } = JSON.parse(encryptedMessage)
-  return decryptHybrid(encryptedKey, encryptedData, iv, recipientPrivateKey)
+  try {
+    console.log('[Decrypt] Starting decryption, encrypted message length:', encryptedMessage.length)
+    const parsed = JSON.parse(encryptedMessage)
+    console.log('[Decrypt] Parsed message:', {
+      hasEncryptedKey: !!parsed.encryptedKey,
+      hasEncryptedData: !!parsed.encryptedData,
+      hasIv: !!parsed.iv,
+      encryptedKeyLength: parsed.encryptedKey?.length,
+      encryptedDataLength: parsed.encryptedData?.length,
+      ivLength: parsed.iv?.length
+    })
+
+    const result = await decryptHybrid(parsed.encryptedKey, parsed.encryptedData, parsed.iv, recipientPrivateKey)
+    console.log('[Decrypt] Decryption successful, result length:', result.length)
+    return result
+  } catch (error) {
+    console.error('[Decrypt] Decryption failed:', error)
+    console.error('[Decrypt] Error stack:', error instanceof Error ? error.stack : 'No stack')
+    throw error
+  }
 }
 
 // Utility functions - Chrome-compatible base64 encoding for binary data
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  const len = bytes.byteLength
-  let binary = ''
+  try {
+    console.log('[Base64] arrayBufferToBase64: buffer size:', buffer.byteLength)
+    const bytes = new Uint8Array(buffer)
+    const len = bytes.byteLength
+    let binary = ''
 
-  // Process in chunks to avoid stack overflow on large data
-  const chunkSize = 0x8000 // 32KB chunks
-  for (let i = 0; i < len; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len))
-    binary += String.fromCharCode.apply(null, Array.from(chunk))
+    // Use smaller chunks for better Chrome mobile compatibility
+    const chunkSize = 8192 // 8KB chunks
+    for (let i = 0; i < len; i += chunkSize) {
+      const end = Math.min(i + chunkSize, len)
+      const chunk = bytes.subarray(i, end)
+
+      // Avoid String.fromCharCode.apply() which can fail on Chrome mobile
+      // Build string directly from chunk
+      for (let j = 0; j < chunk.length; j++) {
+        binary += String.fromCharCode(chunk[j])
+      }
+    }
+
+    const result = btoa(binary)
+    console.log('[Base64] arrayBufferToBase64: result length:', result.length)
+    return result
+  } catch (error) {
+    console.error('[Base64] arrayBufferToBase64 failed:', error)
+    throw error
   }
-
-  return btoa(binary)
 }
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64)
-  const len = binary.length
-  const bytes = new Uint8Array(len)
+  try {
+    console.log('[Base64] base64ToArrayBuffer: input length:', base64.length)
+    const binary = atob(base64)
+    const len = binary.length
+    const bytes = new Uint8Array(len)
 
-  for (let i = 0; i < len; i++) {
-    bytes[i] = binary.charCodeAt(i)
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+
+    console.log('[Base64] base64ToArrayBuffer: result byteLength:', bytes.buffer.byteLength)
+    return bytes.buffer
+  } catch (error) {
+    console.error('[Base64] base64ToArrayBuffer failed:', error)
+    throw error
   }
-
-  return bytes.buffer
 }
 

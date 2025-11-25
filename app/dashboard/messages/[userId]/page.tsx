@@ -172,6 +172,9 @@ export default function ChatPage() {
             try {
               let messageText: string
 
+              console.log('[Chat Page] Decrypting stored message:', msg.messageId, 'isSent:', msg.isSent)
+              console.log('[Chat Page] Encrypted content length:', msg.encryptedContent.length)
+
               // Both sent and received messages are encrypted and need decryption
               // Sent: encrypted with sender's own public key
               // Received: encrypted with recipient's public key
@@ -181,9 +184,9 @@ export default function ChatPage() {
               )
 
               if (msg.isSent) {
-                console.log('[Chat Page] Decrypted sent message:', msg.messageId)
+                console.log('[Chat Page] Successfully decrypted sent message:', msg.messageId)
               } else {
-                console.log('[Chat Page] Decrypted received message:', msg.messageId)
+                console.log('[Chat Page] Successfully decrypted received message:', msg.messageId)
               }
 
               return {
@@ -197,7 +200,11 @@ export default function ChatPage() {
                   : user?.displayName || user?.username || 'Unknown',
               }
             } catch (error) {
-              console.error('[Chat Page] Failed to process message:', msg.messageId, error)
+              console.error('[Chat Page] Failed to decrypt message:', msg.messageId)
+              console.error('[Chat Page] Error details:', error)
+              console.error('[Chat Page] Error name:', error instanceof Error ? error.name : 'Unknown')
+              console.error('[Chat Page] Error message:', error instanceof Error ? error.message : String(error))
+              console.error('[Chat Page] Error stack:', error instanceof Error ? error.stack : 'No stack')
               return {
                 id: msg.messageId,
                 message: '[Failed to decrypt]',
@@ -258,18 +265,32 @@ export default function ChatPage() {
         console.log('[Chat Page] Stored incoming message in IndexedDB:', messageId)
 
         // Decrypt message
+        console.log('[Chat Page] Starting real-time message decryption...')
+        console.log('[Chat Page] Encrypted message length:', encryptedMessage.length)
+        console.log('[Chat Page] Encrypted message preview:', encryptedMessage.substring(0, 100))
+
         const deviceId = localStorage.getItem('p2p4everything-device-id')
-        if (!deviceId) return
+        if (!deviceId) {
+          console.error('[Chat Page] No device ID found')
+          return
+        }
 
         const storedKeyPair = await getStoredKeyPair(deviceId)
-        if (!storedKeyPair) return
+        if (!storedKeyPair) {
+          console.error('[Chat Page] No stored key pair found')
+          return
+        }
 
+        console.log('[Chat Page] Importing key pair...')
         const keyPair = await importKeyPair(storedKeyPair)
+        console.log('[Chat Page] Key pair imported successfully')
 
+        console.log('[Chat Page] Calling decryptMessage...')
         const message = await decryptMessage(
           encryptedMessage,
           keyPair.privateKey
         )
+        console.log('[Chat Page] Message decrypted successfully:', message.substring(0, 50))
 
         // Add to messages
         setMessages((prev) => [
@@ -284,7 +305,10 @@ export default function ChatPage() {
           },
         ])
       } catch (error) {
-        console.error('Error decrypting message:', error)
+        console.error('[Chat Page] Error decrypting message:', error)
+        console.error('[Chat Page] Error name:', error instanceof Error ? error.name : 'Unknown')
+        console.error('[Chat Page] Error message:', error instanceof Error ? error.message : String(error))
+        console.error('[Chat Page] Error stack:', error instanceof Error ? error.stack : 'No stack')
       }
     })
 
