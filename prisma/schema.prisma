@@ -29,6 +29,7 @@ model User {
   sentMessages   MessageMetadata[] @relation("Sender")
   receivedMessages MessageMetadata[] @relation("Receiver")
   encryptionKeys UserEncryptionKey[]
+  keyRotationLogs KeyRotationLog[]
 
   @@index([clerkUserId])
   @@index([email])
@@ -37,21 +38,24 @@ model User {
 }
 
 model Device {
-  id                  String   @id @default(uuid())
+  id                  String    @id @default(uuid())
   userId              String
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   deviceName          String
-  deviceType          String   // web, mobile, desktop
-  publicKey           String   @db.Text // E2E encryption public key
+  deviceType          String    // web, mobile, desktop
+  publicKey           String    @db.Text // E2E encryption public key
   clipboardSyncEnabled Boolean  @default(false) // Per-device clipboard sync preference
-  lastSeen            DateTime @default(now())
-  createdAt           DateTime @default(now())
+  lastSeen            DateTime  @default(now())
+  createdAt           DateTime  @default(now())
+  revokedAt           DateTime? // null = active, set = revoked (soft-delete)
+  revocationReason    String?   // optional reason for audit trail
 
   fileAds       FileAdvertisement[]
   encryptionKey UserEncryptionKey?
 
   @@index([userId])
   @@index([lastSeen])
+  @@index([revokedAt]) // Query for active/revoked devices
 }
 
 model Connection {
@@ -118,6 +122,8 @@ model UserEncryptionKey {
   encryptedMasterKey String   @db.Text // Base64-encoded encrypted key
   keyType            String   // 'device' | 'backup'
   salt               String?  // For backup key derivation (base64)
+  keyVersion         Int      @default(1) // Track key version for rotation
+  isActive           Boolean  @default(true) // False after key rotation
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
@@ -125,5 +131,24 @@ model UserEncryptionKey {
   // For backup keys, we enforce one per user in application logic (initialize endpoint)
   @@index([userId])
   @@index([userId, keyType]) // For efficient lookups
+  @@index([userId, keyVersion]) // For key rotation queries
+}
+
+model KeyRotationLog {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  oldVersion    Int
+  newVersion    Int
+  status        String    // 'pending', 'in_progress', 'completed', 'failed'
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  itemsRotated  Int       @default(0) // Progress tracking
+  totalItems    Int       @default(0)
+  error         String?   // Error message if failed
+  triggeredBy   String?   // 'manual', 'device_revocation', 'scheduled'
+
+  @@index([userId])
+  @@index([userId, status])
 }
 

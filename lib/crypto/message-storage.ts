@@ -777,3 +777,139 @@ export async function migrateMessagesToEncrypted(): Promise<number> {
   console.log(`[MessageStorage] Migration complete: ${migratedCount} messages migrated`)
   return migratedCount
 }
+
+/**
+ * Re-encrypt all messages with a new master key
+ * Used during key rotation to ensure all data uses the new key
+ *
+ * @param oldKey - The current master key to decrypt data
+ * @param newKey - The new master key to encrypt data
+ * @param onProgress - Optional callback for progress updates (done, total)
+ * @returns Number of messages re-encrypted
+ */
+export async function reEncryptAllMessages(
+  oldKey: CryptoKey,
+  newKey: CryptoKey,
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  const db = await openDatabase()
+
+  // Step 1: Count total messages for progress tracking
+  const totalCount = await new Promise<number>((resolve, reject) => {
+    const transaction = db.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.count()
+
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(new Error('Failed to count messages'))
+
+    transaction.oncomplete = () => db.close()
+  })
+
+  if (totalCount === 0) {
+    console.log('[MessageStorage] No messages to re-encrypt')
+    return 0
+  }
+
+  console.log(`[MessageStorage] Re-encrypting ${totalCount} messages...`)
+  onProgress?.(0, totalCount)
+
+  // Step 2: Collect all messages (read-only pass)
+  const readDb = await openDatabase()
+  const records: StoredMessageRecord[] = []
+
+  await new Promise<void>((resolve, reject) => {
+    const transaction = readDb.transaction([STORE_NAME], 'readonly')
+    const store = transaction.objectStore(STORE_NAME)
+    const request = store.openCursor()
+
+    request.onsuccess = (event) => {
+      const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+
+      if (cursor) {
+        records.push(cursor.value as StoredMessageRecord)
+        cursor.continue()
+      } else {
+        resolve()
+      }
+    }
+
+    request.onerror = () => reject(new Error('Failed to read messages'))
+    transaction.oncomplete = () => readDb.close()
+  })
+
+  // Step 3: Re-encrypt each message with the new key
+  let reEncryptedCount = 0
+
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i]
+
+    try {
+      // Decrypt with old key
+      let message: StoredMessage | null = null
+
+      if (record.data !== undefined) {
+        if (typeof record.data === 'string' && isEncrypted(record.data)) {
+          // Encrypted format - decrypt with old key
+          message = await decryptData<StoredMessage>(record.data, oldKey)
+        } else if (typeof record.data === 'object') {
+          // Unencrypted object
+          message = record.data as StoredMessage
+        } else {
+          // Try to parse as JSON
+          try {
+            message = JSON.parse(record.data) as StoredMessage
+          } catch {
+            console.warn(`[MessageStorage] Could not parse message ${record.messageId}`)
+            continue
+          }
+        }
+      } else {
+        // Legacy format - record is the message itself
+        message = record as unknown as StoredMessage
+      }
+
+      if (!message) {
+        console.warn(`[MessageStorage] Could not decrypt message ${record.messageId}`)
+        continue
+      }
+
+      // Re-encrypt with new key
+      const newEncrypted = await encryptData(message, newKey)
+
+      // Write re-encrypted data
+      const writeDb = await openDatabase()
+      await new Promise<void>((resolve, reject) => {
+        const transaction = writeDb.transaction([STORE_NAME], 'readwrite')
+        const store = transaction.objectStore(STORE_NAME)
+
+        const request = store.put({
+          messageId: message!.messageId,
+          conversationId: message!.conversationId,
+          timestamp: message!.timestamp,
+          data: newEncrypted,
+        })
+
+        request.onsuccess = () => {
+          reEncryptedCount++
+          resolve()
+        }
+
+        request.onerror = () => {
+          reject(new Error(`Failed to re-encrypt message ${message!.messageId}`))
+        }
+
+        transaction.oncomplete = () => writeDb.close()
+      })
+
+      // Report progress
+      onProgress?.(i + 1, totalCount)
+    } catch (error) {
+      console.error(`[MessageStorage] Failed to re-encrypt message ${record.messageId}:`, error)
+      // Continue with other messages even if one fails
+    }
+  }
+
+  console.log(`[MessageStorage] Re-encryption complete: ${reEncryptedCount}/${totalCount} messages`)
+  return reEncryptedCount
+}

@@ -70,6 +70,17 @@ export async function PATCH(
   }
 }
 
+const revokeDeviceSchema = z.object({
+  reason: z.string().optional(),
+})
+
+/**
+ * DELETE /api/devices/{id}
+ * Revokes a device (soft-delete) and triggers automatic key rotation
+ *
+ * Security: Device revocation always triggers key rotation to ensure
+ * a potentially compromised device can't decrypt future messages.
+ */
 export async function DELETE(
   request: Request,
   { params }: { params: { id: string } }
@@ -91,6 +102,7 @@ export async function DELETE(
 
     const device = await db.device.findUnique({
       where: { id: params.id },
+      include: { encryptionKey: true },
     })
 
     if (!device) {
@@ -101,13 +113,75 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    await db.device.delete({
-      where: { id: params.id },
+    // Already revoked
+    if (device.revokedAt) {
+      return NextResponse.json({ error: 'Device already revoked' }, { status: 400 })
+    }
+
+    // Parse optional reason from request body
+    let reason: string | undefined
+    try {
+      const body = await request.json()
+      const validated = revokeDeviceSchema.parse(body)
+      reason = validated.reason
+    } catch {
+      // Body parsing failed - reason is optional, continue
+    }
+
+    // Get current key version
+    const currentBackupKey = await db.userEncryptionKey.findFirst({
+      where: {
+        userId: user.id,
+        keyType: 'backup',
+        isActive: true,
+      },
+      select: { keyVersion: true },
     })
 
-    return NextResponse.json({ message: 'Device deleted successfully' })
+    const currentVersion = currentBackupKey?.keyVersion ?? 1
+
+    // Use transaction to ensure atomicity
+    const result = await db.$transaction(async (tx) => {
+      // 1. Soft-delete: Set revokedAt timestamp
+      await tx.device.update({
+        where: { id: params.id },
+        data: {
+          revokedAt: new Date(),
+          revocationReason: reason || 'Device revoked by user',
+        },
+      })
+
+      // 2. Delete the device's encryption key (they can no longer decrypt)
+      if (device.encryptionKey) {
+        await tx.userEncryptionKey.delete({
+          where: { id: device.encryptionKey.id },
+        })
+      }
+
+      // 3. Create key rotation log entry (automatic rotation)
+      const rotationLog = await tx.keyRotationLog.create({
+        data: {
+          userId: user.id,
+          oldVersion: currentVersion,
+          newVersion: currentVersion + 1,
+          status: 'pending',
+          triggeredBy: 'device_revocation',
+        },
+      })
+
+      return { rotationLogId: rotationLog.id }
+    })
+
+    console.log(`[Device] Revoked device ${params.id}, triggered key rotation ${result.rotationLogId}`)
+
+    return NextResponse.json({
+      success: true,
+      message: 'Device revoked successfully',
+      rotationRequired: true,
+      rotationLogId: result.rotationLogId,
+    })
   } catch (error) {
-    console.error('Error deleting device:', error)
+    console.error('Error revoking device:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

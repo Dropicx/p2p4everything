@@ -12,6 +12,13 @@ interface EncryptionContextValue {
   initializeEncryption: (backupPassword: string) => Promise<boolean>
   /** Unlock encryption on a new device using the backup password */
   unlockWithBackupPassword: (backupPassword: string) => Promise<boolean>
+  /** Rotate the master encryption key (requires backup password) */
+  rotateMasterKey: (
+    backupPassword: string,
+    newBackupPassword?: string,
+    onProgress?: (progress: number) => void,
+    rotationLogId?: string
+  ) => Promise<boolean>
   isEncryptionReady: boolean
 }
 
@@ -35,6 +42,7 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     getMasterKey,
     initializeEncryption,
     unlockWithBackupPassword,
+    rotateMasterKey,
   } = useEncryption()
 
   const hasMigrated = useRef(false)
@@ -73,6 +81,7 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     getMasterKey,
     initializeEncryption,
     unlockWithBackupPassword,
+    rotateMasterKey,
     isEncryptionReady,
   }
 

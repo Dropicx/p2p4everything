@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/card'
 import { db } from '@/lib/db'
 import { KeyFingerprint } from '@/components/dashboard/key-fingerprint'
 import { ClipboardSyncToggle } from '@/components/dashboard/clipboard-sync-toggle'
+import { SecuritySettings } from '@/components/dashboard/security-settings'
 
 export default async function SettingsPage() {
   const { userId } = await auth()
@@ -59,9 +60,12 @@ export default async function SettingsPage() {
         </Card>
 
         <Card title="Security">
-          <div className="space-y-4">
+          <div className="space-y-6">
             <KeyFingerprint />
-            <div>
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
+              <SecuritySettings />
+            </div>
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               <p className="text-sm text-gray-600 dark:text-gray-400">
                 Your account security is managed by Clerk. Visit your Clerk
                 dashboard to manage authentication settings, two-factor
