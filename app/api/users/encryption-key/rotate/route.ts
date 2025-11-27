@@ -127,43 +127,89 @@ export async function POST(request: NextRequest) {
 
     // Perform rotation in a transaction
     await db.$transaction(async (tx) => {
-      // 1. Mark all old keys as inactive
-      await tx.userEncryptionKey.updateMany({
+      // 1. Update the existing backup key with new encrypted key
+      // Find the current backup key to update it
+      const existingBackupKey = await tx.userEncryptionKey.findFirst({
         where: {
           userId: user.id,
-          isActive: true,
-        },
-        data: {
-          isActive: false,
-        },
-      })
-
-      // 2. Create new backup key
-      await tx.userEncryptionKey.create({
-        data: {
-          userId: user.id,
-          deviceId: null,
-          encryptedMasterKey: newEncryptedBackupKey,
           keyType: 'backup',
-          salt: newBackupSalt,
-          keyVersion: newVersion,
           isActive: true,
         },
       })
 
-      // 3. Create new device keys for each active device
-      for (const dk of deviceKeys) {
+      if (existingBackupKey) {
+        // Update existing backup key
+        await tx.userEncryptionKey.update({
+          where: { id: existingBackupKey.id },
+          data: {
+            encryptedMasterKey: newEncryptedBackupKey,
+            salt: newBackupSalt,
+            keyVersion: newVersion,
+          },
+        })
+      } else {
+        // Create new backup key if none exists (shouldn't happen in normal flow)
         await tx.userEncryptionKey.create({
           data: {
             userId: user.id,
-            deviceId: dk.deviceId,
-            encryptedMasterKey: dk.encryptedKey,
-            keyType: 'device',
+            deviceId: null,
+            encryptedMasterKey: newEncryptedBackupKey,
+            keyType: 'backup',
+            salt: newBackupSalt,
             keyVersion: newVersion,
             isActive: true,
           },
         })
       }
+
+      // 2. Update or create device keys for each active device
+      for (const dk of deviceKeys) {
+        // Try to find existing key for this device
+        const existingDeviceKey = await tx.userEncryptionKey.findFirst({
+          where: {
+            userId: user.id,
+            deviceId: dk.deviceId,
+          },
+        })
+
+        if (existingDeviceKey) {
+          // Update existing device key
+          await tx.userEncryptionKey.update({
+            where: { id: existingDeviceKey.id },
+            data: {
+              encryptedMasterKey: dk.encryptedKey,
+              keyVersion: newVersion,
+              isActive: true,
+            },
+          })
+        } else {
+          // Create new device key
+          await tx.userEncryptionKey.create({
+            data: {
+              userId: user.id,
+              deviceId: dk.deviceId,
+              encryptedMasterKey: dk.encryptedKey,
+              keyType: 'device',
+              keyVersion: newVersion,
+              isActive: true,
+            },
+          })
+        }
+      }
+
+      // 3. Mark any device keys not in the new set as inactive
+      // This handles devices that were revoked between rotation start and completion
+      const newDeviceIds = deviceKeys.map((dk) => dk.deviceId)
+      await tx.userEncryptionKey.updateMany({
+        where: {
+          userId: user.id,
+          keyType: 'device',
+          deviceId: { notIn: newDeviceIds },
+        },
+        data: {
+          isActive: false,
+        },
+      })
 
       // 4. Update or create rotation log
       if (rotationLogId) {
