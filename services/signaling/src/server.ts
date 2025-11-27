@@ -325,6 +325,9 @@ function handleMessage(connectionId: string, message: any, ws: WebSocket) {
     case 'clipboard-sync':
       handleClipboardSync(connectionId, message, connInfo)
       break
+    case 'key-rotated':
+      handleKeyRotated(connectionId, message, connInfo)
+      break
     default:
       console.warn(`Unknown message type: ${message.type}`)
       ws.send(JSON.stringify({
@@ -518,6 +521,54 @@ function handleClipboardSync(connectionId: string, message: any, connInfo: Conne
   })
 
   console.log(`[Clipboard Sync] Sent clipboard sync from device ${fromDeviceId} to ${sentCount} device(s) for user ${senderUserId}`)
+}
+
+// Key rotation notification handling
+function handleKeyRotated(connectionId: string, message: any, connInfo: ConnectionInfo | undefined) {
+  // Ensure user is authenticated
+  if (!connInfo?.databaseUserId) {
+    const senderConn = connections.get(connectionId)
+    if (senderConn) {
+      senderConn.ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Must be authenticated to send key rotation messages',
+        originalType: message.type,
+      }))
+    }
+    console.warn(`Key rotation rejected from unauthenticated connection: ${connectionId}`)
+    return
+  }
+
+  const { fromDeviceId, keyVersion } = message
+  const senderUserId = connInfo.databaseUserId
+
+  // Get all connections for the same user (excluding sender)
+  const userConns = userConnections.get(senderUserId)
+  if (!userConns || userConns.size <= 1) {
+    // Only sender is connected, no other devices to notify
+    console.log(`[Key Rotation] No other devices connected for user ${senderUserId}`)
+    return
+  }
+
+  const messagePayload = {
+    type: 'key-rotated',
+    fromDeviceId: fromDeviceId || connInfo.deviceId,
+    keyVersion,
+    timestamp: Date.now(),
+  }
+
+  let sentCount = 0
+  userConns.forEach((connId) => {
+    if (connId !== connectionId) {
+      const targetConn = connections.get(connId)
+      if (targetConn) {
+        targetConn.ws.send(JSON.stringify(messagePayload))
+        sentCount++
+      }
+    }
+  })
+
+  console.log(`[Key Rotation] Sent key rotation notification (v${keyVersion}) to ${sentCount} device(s) for user ${senderUserId}`)
 }
 
 // Signaling message forwarding

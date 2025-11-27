@@ -18,6 +18,26 @@ export function useWebRTC() {
     new Map()
   )
 
+  // Listen for send-key-rotated events to broadcast to other devices
+  useEffect(() => {
+    const handleSendKeyRotated = (event: Event) => {
+      const customEvent = event as CustomEvent
+      const { deviceId, keyVersion } = customEvent.detail || {}
+
+      if (clientRef.current?.signaling) {
+        console.log(`[useWebRTC] Sending key-rotated notification: device=${deviceId}, version=${keyVersion}`)
+        clientRef.current.signaling.sendKeyRotated(deviceId, keyVersion)
+      } else {
+        console.warn('[useWebRTC] Cannot send key-rotated: signaling client not ready')
+      }
+    }
+
+    window.addEventListener('send-key-rotated', handleSendKeyRotated)
+    return () => {
+      window.removeEventListener('send-key-rotated', handleSendKeyRotated)
+    }
+  }, [])
+
   useEffect(() => {
     let mounted = true
 
@@ -71,6 +91,21 @@ export function useWebRTC() {
           setIsSignalingConnected(true)
           setIsReady(true)
           console.log('[useWebRTC] Client initialized and ready')
+
+          // Listen for key-rotated messages from signaling server
+          newClient.signaling?.onMessage('key-rotated', (message) => {
+            if (message.type === 'key-rotated') {
+              console.log('[useWebRTC] Received key-rotated notification:', message)
+              // Dispatch custom event that EncryptionProvider listens to
+              window.dispatchEvent(new CustomEvent('key-rotated', {
+                detail: {
+                  fromDeviceId: message.fromDeviceId,
+                  keyVersion: message.keyVersion,
+                  timestamp: message.timestamp,
+                }
+              }))
+            }
+          })
         } else {
           // Component unmounted during init, clean up
           newClient.disconnect()

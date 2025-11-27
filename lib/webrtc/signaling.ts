@@ -17,6 +17,7 @@ export type SignalingMessage =
   | { type: 'connection-rejected'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'connection-removed'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'clipboard-sync'; fromConnectionId: string; fromDeviceId: string; fromUserId: string; toDeviceId?: string; encryptedData: string; timestamp: number }
+  | { type: 'key-rotated'; fromDeviceId: string; keyVersion: number; timestamp: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 
@@ -233,6 +234,19 @@ export class SignalingClient {
       encryptedData,
       fromDeviceId,
       toDeviceId,
+      timestamp: Date.now(),
+    })
+  }
+
+  /**
+   * Send key rotation notification
+   * This will be routed to all other devices of the same user (via signaling server)
+   */
+  sendKeyRotated(fromDeviceId: string, keyVersion: number): void {
+    this.send({
+      type: 'key-rotated',
+      fromDeviceId,
+      keyVersion,
       timestamp: Date.now(),
     })
   }

@@ -689,6 +689,9 @@ export function useEncryption() {
           throw new Error(errorData.error || 'Failed to rotate keys on server')
         }
 
+        const rotateResult = await rotateResponse.json()
+        const newKeyVersion = rotateResult.newVersion
+
         updateProgress(40)
 
         // Step 7: Re-encrypt all IndexedDB data with new key
@@ -732,6 +735,15 @@ export function useEncryption() {
 
         updateProgress(100)
 
+        // Step 10: Notify other devices via WebSocket
+        console.log('[Encryption] Notifying other devices of key rotation...')
+        window.dispatchEvent(new CustomEvent('send-key-rotated', {
+          detail: {
+            deviceId,
+            keyVersion: newKeyVersion,
+          }
+        }))
+
         setState((prev) => ({
           ...prev,
           isRotating: false,
@@ -754,6 +766,60 @@ export function useEncryption() {
     [userId]
   )
 
+  /**
+   * Refresh the master key from the server
+   * Called when another device has rotated the key
+   */
+  const refreshMasterKey = useCallback(async (): Promise<boolean> => {
+    const deviceId = localStorage.getItem(DEVICE_ID_KEY)
+    if (!deviceId || !userId) {
+      console.log('[Encryption] Cannot refresh key: no device ID or user ID')
+      return false
+    }
+
+    // Don't refresh if we're currently rotating (we initiated it)
+    if (state.isRotating) {
+      console.log('[Encryption] Skipping refresh - rotation in progress')
+      return false
+    }
+
+    console.log('[Encryption] Refreshing master key from server...')
+
+    try {
+      // Fetch new encrypted key from server
+      const response = await fetch(`/api/users/encryption-key?deviceId=${deviceId}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch key from server')
+      }
+
+      const data = await response.json()
+      if (!data.encryptedMasterKey || data.keyType !== 'device') {
+        throw new Error('Invalid key response from server')
+      }
+
+      // Decrypt with device's private key
+      const storedKeyPair = await getKeyPair(deviceId)
+      if (!storedKeyPair) {
+        throw new Error('No device key pair found')
+      }
+
+      const keyPair = await importKeyPair(storedKeyPair)
+      const newMasterKey = await decryptMasterKeyFromDevice(
+        data.encryptedMasterKey,
+        keyPair.privateKey
+      )
+
+      // Update the master key reference
+      masterKeyRef.current = newMasterKey
+      console.log('[Encryption] Master key refreshed successfully')
+
+      return true
+    } catch (error) {
+      console.error('[Encryption] Failed to refresh master key:', error)
+      return false
+    }
+  }, [userId, state.isRotating])
+
   return {
     state,
     getMasterKey,
@@ -761,5 +827,6 @@ export function useEncryption() {
     initializeEncryption,
     unlockWithBackupPassword,
     rotateMasterKey,
+    refreshMasterKey,
   }
 }

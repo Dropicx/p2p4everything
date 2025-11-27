@@ -19,6 +19,8 @@ interface EncryptionContextValue {
     onProgress?: (progress: number) => void,
     rotationLogId?: string
   ) => Promise<boolean>
+  /** Refresh the master key from the server (called when another device rotates) */
+  refreshMasterKey: () => Promise<boolean>
   isEncryptionReady: boolean
 }
 
@@ -43,6 +45,7 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     initializeEncryption,
     unlockWithBackupPassword,
     rotateMasterKey,
+    refreshMasterKey,
   } = useEncryption()
 
   const hasMigrated = useRef(false)
@@ -74,6 +77,30 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     }
   }, [state.isInitialized, getMasterKey])
 
+  // Listen for key rotation notifications from other devices
+  useEffect(() => {
+    if (!state.isInitialized) return
+
+    const handleKeyRotated = async (event: Event) => {
+      const customEvent = event as CustomEvent
+      const { fromDeviceId, keyVersion } = customEvent.detail || {}
+      console.log(`[EncryptionProvider] Key rotated on device ${fromDeviceId}, version: ${keyVersion}`)
+      console.log('[EncryptionProvider] Refreshing master key...')
+
+      const success = await refreshMasterKey()
+      if (success) {
+        console.log('[EncryptionProvider] Master key refreshed successfully after rotation notification')
+      } else {
+        console.error('[EncryptionProvider] Failed to refresh master key after rotation notification')
+      }
+    }
+
+    window.addEventListener('key-rotated', handleKeyRotated)
+    return () => {
+      window.removeEventListener('key-rotated', handleKeyRotated)
+    }
+  }, [state.isInitialized, refreshMasterKey])
+
   const isEncryptionReady = state.isInitialized && getMasterKey() !== null
 
   const value: EncryptionContextValue = {
@@ -82,6 +109,7 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     initializeEncryption,
     unlockWithBackupPassword,
     rotateMasterKey,
+    refreshMasterKey,
     isEncryptionReady,
   }
 
