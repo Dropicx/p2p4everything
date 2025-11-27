@@ -17,6 +17,8 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
   'default-src': ["'self'"],
   'script-src': [
     "'self'",
+    // Next.js uses inline scripts for hydration
+    "'unsafe-inline'",
     // Clerk SDK scripts
     'https://*.clerk.accounts.dev',
     'https://*.clerk.com',
