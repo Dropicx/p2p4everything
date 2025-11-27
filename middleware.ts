@@ -43,6 +43,8 @@ const CSP_DIRECTIVES: Record<string, string[]> = {
   'base-uri': ["'self'"],
   'form-action': ["'self'"],
   'object-src': ["'none'"],
+  // Clerk uses blob workers for token polling
+  'worker-src': ["'self'", 'blob:'],
 }
 
 /**
