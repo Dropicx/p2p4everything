@@ -24,12 +24,14 @@ export default async function DevicesPage() {
   }
 
   // Convert dates to strings for client component
+  // Include revokedAt so client can filter active vs revoked devices
   const devices = user.devices.map((device) => ({
     id: device.id,
     deviceName: device.deviceName,
     deviceType: device.deviceType,
     createdAt: device.createdAt.toISOString(),
     lastSeen: device.lastSeen.toISOString(),
+    revokedAt: device.revokedAt?.toISOString() ?? null,
   }))
 
   return <DevicesPageClient devices={devices} />
