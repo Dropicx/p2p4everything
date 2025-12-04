@@ -77,41 +77,44 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // If device was previously revoked, clear the revocation status
-    // This allows the device to be re-activated when recovering via backup password
-    if (device.revokedAt) {
-      await db.device.update({
-        where: { id: deviceId },
-        data: {
-          revokedAt: null,
-          revocationReason: null,
-        },
-      })
-      console.log(`[Encryption Key] Cleared revocation status for device ${deviceId}`)
-    }
+    // Use a transaction to ensure device reactivation and key creation are atomic
+    await db.$transaction(async (tx) => {
+      // If device was previously revoked, clear the revocation status
+      // This allows the device to be re-activated when recovering via backup password
+      if (device.revokedAt) {
+        await tx.device.update({
+          where: { id: deviceId },
+          data: {
+            revokedAt: null,
+            revocationReason: null,
+          },
+        })
+        console.log(`[Encryption Key] Cleared revocation status for device ${deviceId}`)
+      }
 
-    if (existingDeviceKey) {
-      // Update existing key
-      await db.userEncryptionKey.update({
-        where: { id: existingDeviceKey.id },
-        data: {
-          encryptedMasterKey: encryptedMasterKey,
-          updatedAt: new Date(),
-        },
-      })
-      console.log(`[Encryption Key] Updated device key for device ${deviceId}`)
-    } else {
-      // Create new device key
-      await db.userEncryptionKey.create({
-        data: {
-          userId: user.id,
-          deviceId: deviceId,
-          encryptedMasterKey: encryptedMasterKey,
-          keyType: 'device',
-        },
-      })
-      console.log(`[Encryption Key] Created device key for device ${deviceId}`)
-    }
+      if (existingDeviceKey) {
+        // Update existing key
+        await tx.userEncryptionKey.update({
+          where: { id: existingDeviceKey.id },
+          data: {
+            encryptedMasterKey: encryptedMasterKey,
+            updatedAt: new Date(),
+          },
+        })
+        console.log(`[Encryption Key] Updated device key for device ${deviceId}`)
+      } else {
+        // Create new device key
+        await tx.userEncryptionKey.create({
+          data: {
+            userId: user.id,
+            deviceId: deviceId,
+            encryptedMasterKey: encryptedMasterKey,
+            keyType: 'device',
+          },
+        })
+        console.log(`[Encryption Key] Created device key for device ${deviceId}`)
+      }
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {
