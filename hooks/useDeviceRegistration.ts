@@ -10,6 +10,7 @@ import {
   getKeyFingerprint,
 } from '@/lib/crypto/keys'
 import { storeKeyPair, getKeyPair, hasKeyPair, isKeyStorageEncryptionAvailable } from '@/lib/crypto/storage'
+import { getDeviceInfo } from '@/lib/device-detection'
 
 interface DeviceRegistrationState {
   deviceId: string | null
@@ -41,56 +42,25 @@ function getDeviceId(): string {
 }
 
 /**
- * Get device name from localStorage or generate one
+ * Get device name from localStorage or generate one using modern device detection
+ * Uses Client Hints API when available for accurate device/browser identification
  */
-function getDeviceName(): string {
+async function getDeviceNameAsync(): Promise<string> {
   let deviceName = localStorage.getItem(DEVICE_NAME_KEY)
   if (!deviceName) {
-    const userAgent = navigator.userAgent
-    const platform = navigator.platform || ''
-    
-    // More specific device detection
-    if (/iPhone|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(userAgent)) {
-      // Try to detect specific device
-      if (/iPhone/i.test(userAgent)) {
-        deviceName = 'iPhone'
-      } else if (/iPad/i.test(userAgent)) {
-        deviceName = 'iPad'
-      } else if (/Android/i.test(userAgent)) {
-        // Try to get Android version or model
-        const androidMatch = userAgent.match(/Android\s([0-9\.]*)/)
-        deviceName = androidMatch ? `Android ${androidMatch[1]}` : 'Android Device'
-      } else {
-        deviceName = 'Mobile Device'
-      }
-    } else if (/Tablet|iPad/i.test(userAgent)) {
-      deviceName = 'Tablet'
-    } else {
-      // Desktop browser - include browser name
-      const browserMatch = userAgent.match(/(Chrome|Firefox|Safari|Edge|Opera|Vivaldi)\/([0-9\.]*)/)
-      if (browserMatch) {
-        deviceName = `${browserMatch[1]} Browser`
-      } else {
-        deviceName = 'Web Browser'
-      }
-    }
-    
+    const deviceInfo = await getDeviceInfo()
+    deviceName = deviceInfo.displayName
     localStorage.setItem(DEVICE_NAME_KEY, deviceName)
   }
   return deviceName
 }
 
 /**
- * Detect device type
+ * Detect device type using modern device detection
  */
-function getDeviceType(): 'web' | 'mobile' | 'desktop' {
-  const userAgent = navigator.userAgent
-  if (userAgent.includes('Mobile')) {
-    return 'mobile'
-  } else if (userAgent.includes('Tablet')) {
-    return 'mobile'
-  }
-  return 'web'
+async function getDeviceTypeAsync(): Promise<'web' | 'mobile' | 'desktop'> {
+  const deviceInfo = await getDeviceInfo()
+  return deviceInfo.isMobile ? 'mobile' : 'web'
 }
 
 /**
@@ -194,8 +164,8 @@ export function useDeviceRegistration() {
             const devicesResponse = await fetch('/api/devices')
             if (devicesResponse.ok) {
               const devices = await devicesResponse.json()
-              const deviceName = getDeviceName()
-              const deviceType = getDeviceType()
+              const deviceName = await getDeviceNameAsync()
+              const deviceType = await getDeviceTypeAsync()
               const serverDevice = devices.find(
                 (d: any) => d.deviceName === deviceName && d.deviceType === deviceType
               )
@@ -466,8 +436,8 @@ export function useDeviceRegistration() {
         }
 
         const devices = await devicesResponse.json()
-        const deviceName = getDeviceName()
-        const deviceType = getDeviceType()
+        const deviceName = await getDeviceNameAsync()
+        const deviceType = await getDeviceTypeAsync()
 
         // Check if a device with same name and type already exists for this user
         const existingDevice = devices.find((d: any) =>
