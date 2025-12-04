@@ -1,10 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { useEncryption } from '@/hooks/useEncryption'
 
 interface Device {
   id: string
@@ -20,11 +20,21 @@ interface DevicesPageClientProps {
 }
 
 export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
-  const router = useRouter()
+  const { rotateMasterKey } = useEncryption()
   const [deviceList, setDeviceList] = useState(devices)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showRevokeDialog, setShowRevokeDialog] = useState<string | null>(null)
   const [revokeReason, setRevokeReason] = useState('')
+
+  // Key rotation state
+  const [showRotationDialog, setShowRotationDialog] = useState(false)
+  const [rotationLogId, setRotationLogId] = useState<string | null>(null)
+  const [rotationPassword, setRotationPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rotationInProgress, setRotationInProgress] = useState(false)
+  const [rotationProgress, setRotationProgress] = useState(0)
+  const [rotationError, setRotationError] = useState<string | null>(null)
+  const [rotationComplete, setRotationComplete] = useState(false)
 
   const handleRevoke = async (deviceId: string) => {
     setDeleting(deviceId)
@@ -43,14 +53,10 @@ export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
         setShowRevokeDialog(null)
         setRevokeReason('')
 
-        // If rotation is required, redirect to settings page
+        // If rotation is required, show inline key rotation dialog
         if (data.rotationRequired) {
-          // Show alert about key rotation
-          alert(
-            'Device revoked successfully. You will now be redirected to complete key rotation. ' +
-            'Please enter your backup password to secure your data.'
-          )
-          router.push('/dashboard/settings')
+          setRotationLogId(data.rotationLogId)
+          setShowRotationDialog(true)
         }
       } else {
         const error = await response.json()
@@ -62,6 +68,45 @@ export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
     } finally {
       setDeleting(null)
     }
+  }
+
+  const handleRotation = async () => {
+    if (!rotationPassword.trim()) {
+      setRotationError('Please enter your backup password')
+      return
+    }
+
+    setRotationInProgress(true)
+    setRotationProgress(0)
+    setRotationError(null)
+
+    try {
+      const success = await rotateMasterKey(
+        rotationPassword,
+        undefined,
+        (progress) => setRotationProgress(progress),
+        rotationLogId || undefined
+      )
+
+      if (success) {
+        setRotationComplete(true)
+      } else {
+        setRotationError('Key rotation failed. Please check your password and try again.')
+      }
+    } catch (error) {
+      setRotationError(error instanceof Error ? error.message : 'Key rotation failed')
+    } finally {
+      setRotationInProgress(false)
+    }
+  }
+
+  const closeRotationDialog = () => {
+    setShowRotationDialog(false)
+    setRotationLogId(null)
+    setRotationPassword('')
+    setRotationError(null)
+    setRotationComplete(false)
+    setRotationProgress(0)
   }
 
   const activeDevices = deviceList.filter((d) => !d.revokedAt)
@@ -194,6 +239,130 @@ export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
                 {deleting ? 'Revoking...' : 'Revoke Device'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Key Rotation Dialog - Non-dismissable */}
+      {showRotationDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              Complete Key Rotation
+            </h3>
+
+            {!rotationComplete ? (
+              <>
+                <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                  <div className="flex items-start gap-2">
+                    <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm text-yellow-700 dark:text-yellow-400 font-medium">
+                        Security: Key Rotation Required
+                      </p>
+                      <p className="text-sm text-yellow-600 dark:text-yellow-500 mt-1">
+                        Your encryption keys are being rotated to ensure the revoked device can no longer access your data.
+                        Enter your backup password to complete this process.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Backup Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={rotationPassword}
+                      onChange={(e) => setRotationPassword(e.target.value)}
+                      disabled={rotationInProgress}
+                      placeholder="Enter your backup password"
+                      className="w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !rotationInProgress) {
+                          handleRotation()
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      disabled={rotationInProgress}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
+                    >
+                      {showPassword ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {rotationInProgress && (
+                  <div className="mb-4">
+                    <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-1">
+                      <span>Rotating keys...</span>
+                      <span>{rotationProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${rotationProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {rotationError && (
+                  <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                    <p className="text-sm text-red-700 dark:text-red-400">{rotationError}</p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleRotation}
+                  disabled={rotationInProgress || !rotationPassword.trim()}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {rotationInProgress ? 'Rotating Keys...' : 'Rotate Keys'}
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                  <div className="flex items-start gap-2">
+                    <svg className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm text-green-700 dark:text-green-400 font-medium">
+                        Key Rotation Complete
+                      </p>
+                      <p className="text-sm text-green-600 dark:text-green-500 mt-1">
+                        Your encryption keys have been successfully rotated. The revoked device can no longer access your data.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={closeRotationDialog}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  Done
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}
