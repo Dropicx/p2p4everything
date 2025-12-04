@@ -77,6 +77,19 @@ export async function POST(request: NextRequest) {
       },
     })
 
+    // If device was previously revoked, clear the revocation status
+    // This allows the device to be re-activated when recovering via backup password
+    if (device.revokedAt) {
+      await db.device.update({
+        where: { id: deviceId },
+        data: {
+          revokedAt: null,
+          revocationReason: null,
+        },
+      })
+      console.log(`[Encryption Key] Cleared revocation status for device ${deviceId}`)
+    }
+
     if (existingDeviceKey) {
       // Update existing key
       await db.userEncryptionKey.update({
