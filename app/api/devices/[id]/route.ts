@@ -118,6 +118,21 @@ export async function DELETE(
       return NextResponse.json({ error: 'Device already revoked' }, { status: 400 })
     }
 
+    // Check if this is the user's only active device
+    const activeDeviceCount = await db.device.count({
+      where: {
+        userId: user.id,
+        revokedAt: null,
+      },
+    })
+
+    if (activeDeviceCount <= 1) {
+      return NextResponse.json(
+        { error: 'Cannot revoke your only active device. You would be locked out of your account.' },
+        { status: 400 }
+      )
+    }
+
     // Parse optional reason from request body
     let reason: string | undefined
     try {
