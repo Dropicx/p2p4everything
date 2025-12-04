@@ -1,8 +1,8 @@
 import { auth } from '@clerk/nextjs/server'
 import { db } from '@/lib/db'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth()
 
@@ -18,8 +18,17 @@ export async function GET() {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
+    // Check if caller wants to include revoked devices (for admin/history purposes)
+    const { searchParams } = new URL(request.url)
+    const includeRevoked = searchParams.get('includeRevoked') === 'true'
+
     const devices = await db.device.findMany({
-      where: { userId: user.id },
+      where: {
+        userId: user.id,
+        // By default, only return active (non-revoked) devices
+        // This prevents clipboard sync and other features from targeting revoked devices
+        ...(includeRevoked ? {} : { revokedAt: null }),
+      },
       orderBy: { lastSeen: 'desc' },
     })
 
