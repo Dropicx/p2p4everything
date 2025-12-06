@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation'
 import { useAuth, useClerk } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { AlertTriangle, LogOut, RefreshCw } from 'lucide-react'
 
 export default function DeviceRevokedPage() {
   const router = useRouter()
@@ -42,7 +41,10 @@ export default function DeviceRevokedPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
-            <AlertTriangle className="h-6 w-6 text-destructive" />
+            {/* AlertTriangle icon */}
+            <svg className="h-6 w-6 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
           </div>
           <CardTitle className="text-xl">Device Access Revoked</CardTitle>
           <CardDescription className="text-base">
@@ -72,7 +74,10 @@ export default function DeviceRevokedPage() {
               onClick={handleReauthenticate}
               className="w-full"
             >
-              <RefreshCw className="mr-2 h-4 w-4" />
+              {/* RefreshCw icon */}
+              <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
               Re-authenticate This Device
             </Button>
             <Button
@@ -81,7 +86,10 @@ export default function DeviceRevokedPage() {
               disabled={isLoggingOut}
               className="w-full"
             >
-              <LogOut className="mr-2 h-4 w-4" />
+              {/* LogOut icon */}
+              <svg className="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
               {isLoggingOut ? 'Signing out...' : 'Sign Out'}
             </Button>
           </div>
