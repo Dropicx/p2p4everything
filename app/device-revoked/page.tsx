@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth, useClerk } from '@clerk/nextjs'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 
 export default function DeviceRevokedPage() {
   const router = useRouter()
@@ -37,32 +37,37 @@ export default function DeviceRevokedPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10">
+        {/* Header */}
+        <div className="text-center mb-6">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/30">
             {/* AlertTriangle icon */}
-            <svg className="h-6 w-6 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="h-6 w-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <CardTitle className="text-xl">Device Access Revoked</CardTitle>
-          <CardDescription className="text-base">
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
+            Device Access Revoked
+          </h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">
             This device has been revoked and can no longer access your encrypted data.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
-            <p className="mb-2 font-medium text-foreground">What happened?</p>
-            <p>
+          </p>
+        </div>
+
+        {/* Content */}
+        <div className="space-y-4">
+          <div className="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-4 text-sm">
+            <p className="mb-2 font-medium text-gray-900 dark:text-white">What happened?</p>
+            <p className="text-gray-600 dark:text-gray-400">
               An administrator or another device has revoked access for this device.
               This is a security measure to protect your data.
             </p>
           </div>
 
-          <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
-            <p className="mb-2 font-medium text-foreground">What can you do?</p>
-            <ul className="list-disc list-inside space-y-1">
+          <div className="rounded-lg bg-gray-100 dark:bg-gray-700/50 p-4 text-sm">
+            <p className="mb-2 font-medium text-gray-900 dark:text-white">What can you do?</p>
+            <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-400">
               <li>Re-authenticate this device using your backup password</li>
               <li>Sign out and use a different device</li>
               <li>Contact support if you believe this was a mistake</li>
@@ -81,7 +86,7 @@ export default function DeviceRevokedPage() {
               Re-authenticate This Device
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               onClick={handleSignOut}
               disabled={isLoggingOut}
               className="w-full"
@@ -93,7 +98,7 @@ export default function DeviceRevokedPage() {
               {isLoggingOut ? 'Signing out...' : 'Sign Out'}
             </Button>
           </div>
-        </CardContent>
+        </div>
       </Card>
     </div>
   )
