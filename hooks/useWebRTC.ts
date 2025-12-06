@@ -106,6 +106,28 @@ export function useWebRTC() {
               }))
             }
           })
+
+          // Listen for device-revoked messages from signaling server
+          newClient.signaling?.onMessage('device-revoked', (message) => {
+            if (message.type === 'device-revoked') {
+              const currentDeviceId = localStorage.getItem('p2p4e_device_id')
+              console.log('[useWebRTC] Received device-revoked notification:', message)
+              console.log('[useWebRTC] Current device ID:', currentDeviceId, 'Target:', message.targetDeviceId)
+
+              // Check if this device is the one being revoked
+              if (message.targetDeviceId === currentDeviceId) {
+                console.log('[useWebRTC] THIS DEVICE HAS BEEN REVOKED - triggering logout')
+                // Dispatch custom event that will be handled by EncryptionProvider
+                window.dispatchEvent(new CustomEvent('device-revoked', {
+                  detail: {
+                    targetDeviceId: message.targetDeviceId,
+                    reason: message.reason,
+                    timestamp: message.timestamp,
+                  }
+                }))
+              }
+            }
+          })
         } else {
           // Component unmounted during init, clean up
           newClient.disconnect()

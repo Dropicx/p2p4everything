@@ -101,6 +101,40 @@ export function EncryptionProvider({ children }: EncryptionProviderProps) {
     }
   }, [state.isInitialized, refreshMasterKey])
 
+  // Listen for device revocation notifications
+  useEffect(() => {
+    const handleDeviceRevoked = async (event: Event) => {
+      const customEvent = event as CustomEvent
+      const { targetDeviceId, reason } = customEvent.detail || {}
+      console.log(`[EncryptionProvider] This device has been revoked! Device: ${targetDeviceId}, Reason: ${reason}`)
+
+      // Clear all local device data
+      localStorage.removeItem('p2p4e_device_id')
+      localStorage.removeItem('p2p4e_device_name')
+      localStorage.removeItem('p2p4everything-device-id')
+
+      // Clear IndexedDB encryption keys
+      try {
+        const databases = ['p2p4everything-keys', 'p2p4everything-messages']
+        for (const dbName of databases) {
+          const request = indexedDB.deleteDatabase(dbName)
+          request.onerror = () => console.error(`[EncryptionProvider] Failed to delete ${dbName}`)
+          request.onsuccess = () => console.log(`[EncryptionProvider] Deleted ${dbName}`)
+        }
+      } catch (error) {
+        console.error('[EncryptionProvider] Error clearing IndexedDB:', error)
+      }
+
+      // Redirect to device-revoked info page
+      window.location.href = '/device-revoked'
+    }
+
+    window.addEventListener('device-revoked', handleDeviceRevoked)
+    return () => {
+      window.removeEventListener('device-revoked', handleDeviceRevoked)
+    }
+  }, [])
+
   const isEncryptionReady = state.isInitialized && getMasterKey() !== null
 
   const value: EncryptionContextValue = {

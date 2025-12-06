@@ -19,7 +19,10 @@ export async function GET() {
     }
 
     const devices = await db.device.findMany({
-      where: { userId: user.id },
+      where: {
+        userId: user.id,
+        revokedAt: null, // Only return active (non-revoked) devices
+      },
       orderBy: { lastSeen: 'desc' },
     })
 

@@ -14,6 +14,7 @@ export default async function DevicesPage() {
     where: { clerkUserId: userId },
     include: {
       devices: {
+        where: { revokedAt: null }, // Only include active (non-revoked) devices
         orderBy: { lastSeen: 'desc' },
       },
     },

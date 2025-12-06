@@ -57,9 +57,13 @@ export async function GET(
       )
     }
 
-    // Get target user's devices (only public keys)
+    // Get target user's devices (only public keys of active devices)
+    // CRITICAL: Do not return revoked devices - prevents sending data to revoked devices
     const devices = await db.device.findMany({
-      where: { userId: targetUser.id },
+      where: {
+        userId: targetUser.id,
+        revokedAt: null, // Only active devices
+      },
       select: {
         id: true,
         publicKey: true,

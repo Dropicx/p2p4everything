@@ -328,6 +328,9 @@ function handleMessage(connectionId: string, message: any, ws: WebSocket) {
     case 'key-rotated':
       handleKeyRotated(connectionId, message, connInfo)
       break
+    case 'device-revoked':
+      handleDeviceRevoked(connectionId, message, connInfo)
+      break
     default:
       console.warn(`Unknown message type: ${message.type}`)
       ws.send(JSON.stringify({
@@ -569,6 +572,71 @@ function handleKeyRotated(connectionId: string, message: any, connInfo: Connecti
   })
 
   console.log(`[Key Rotation] Sent key rotation notification (v${keyVersion}) to ${sentCount} device(s) for user ${senderUserId}`)
+}
+
+// Device revocation notification handling
+function handleDeviceRevoked(connectionId: string, message: any, connInfo: ConnectionInfo | undefined) {
+  // Ensure user is authenticated
+  if (!connInfo?.databaseUserId) {
+    const senderConn = connections.get(connectionId)
+    if (senderConn) {
+      senderConn.ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Must be authenticated to send device revocation messages',
+        originalType: message.type,
+      }))
+    }
+    console.warn(`Device revocation rejected from unauthenticated connection: ${connectionId}`)
+    return
+  }
+
+  const { targetDeviceId, reason } = message
+  const senderUserId = connInfo.databaseUserId
+
+  if (!targetDeviceId) {
+    const senderConn = connections.get(connectionId)
+    if (senderConn) {
+      senderConn.ws.send(JSON.stringify({
+        type: 'error',
+        message: 'targetDeviceId is required for device revocation',
+        originalType: message.type,
+      }))
+    }
+    console.warn(`Device revocation rejected: missing targetDeviceId from ${connectionId}`)
+    return
+  }
+
+  // Get all connections for the same user and find the target device
+  const userConns = userConnections.get(senderUserId)
+  if (!userConns || userConns.size === 0) {
+    console.log(`[Device Revocation] No devices connected for user ${senderUserId}`)
+    return
+  }
+
+  const messagePayload = {
+    type: 'device-revoked',
+    targetDeviceId,
+    reason: reason || 'Device revoked by user',
+    timestamp: Date.now(),
+  }
+
+  let sentCount = 0
+  userConns.forEach((connId) => {
+    if (connId !== connectionId) {
+      const targetConn = connections.get(connId)
+      if (targetConn && targetConn.deviceId === targetDeviceId) {
+        targetConn.ws.send(JSON.stringify(messagePayload))
+        sentCount++
+        console.log(`[Device Revocation] Sent revocation to device ${targetDeviceId} (connection ${connId})`)
+      }
+    }
+  })
+
+  if (sentCount === 0) {
+    console.log(`[Device Revocation] Target device ${targetDeviceId} not currently connected for user ${senderUserId}`)
+  } else {
+    console.log(`[Device Revocation] Sent revocation notification to ${sentCount} connection(s) for device ${targetDeviceId}`)
+  }
 }
 
 // Signaling message forwarding

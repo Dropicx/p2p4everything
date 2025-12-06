@@ -446,5 +446,13 @@ export class WebRTCClient {
     }
     this.signaling.sendClipboardSync(encryptedData, this.config.deviceId, toDeviceId)
   }
+
+  /**
+   * Send device revocation notification via signaling server
+   * This notifies the target device that it has been revoked and should logout
+   */
+  sendDeviceRevoked(targetDeviceId: string, reason?: string): void {
+    this.signaling.sendDeviceRevoked(targetDeviceId, reason)
+  }
 }
 

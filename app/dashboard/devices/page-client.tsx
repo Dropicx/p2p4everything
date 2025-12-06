@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { useEncryption } from '@/hooks/useEncryption'
+import { useWebRTC } from '@/hooks/useWebRTC'
 
 interface Device {
   id: string
@@ -68,6 +69,7 @@ function formatDeviceType(deviceType: string): string {
 
 export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
   const { rotateMasterKey } = useEncryption()
+  const { client } = useWebRTC()
   const [deviceList, setDeviceList] = useState(devices)
   const [, setTick] = useState(0) // Force re-render for relative time updates
   const [deleting, setDeleting] = useState<string | null>(null)
@@ -140,6 +142,12 @@ export default function DevicesPageClient({ devices }: DevicesPageClientProps) {
         const data = await response.json()
         setDeviceList(deviceList.filter((d) => d.id !== deviceId))
         setShowRevokeDialog(null)
+
+        // Send WebSocket notification to the revoked device so it can logout
+        if (client) {
+          client.sendDeviceRevoked(deviceId, revokeReason || 'Device revoked by user')
+        }
+
         setRevokeReason('')
 
         // If rotation is required, show inline key rotation dialog

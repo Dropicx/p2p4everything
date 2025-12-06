@@ -18,6 +18,7 @@ export type SignalingMessage =
   | { type: 'connection-removed'; fromUserId: string; connectionId: string; timestamp: number }
   | { type: 'clipboard-sync'; fromConnectionId: string; fromDeviceId: string; fromUserId: string; toDeviceId?: string; encryptedData: string; timestamp: number }
   | { type: 'key-rotated'; fromDeviceId: string; keyVersion: number; timestamp: number }
+  | { type: 'device-revoked'; targetDeviceId: string; reason?: string; timestamp: number }
   | { type: 'error'; message: string }
   | { type: 'pong' }
 
@@ -247,6 +248,19 @@ export class SignalingClient {
       type: 'key-rotated',
       fromDeviceId,
       keyVersion,
+      timestamp: Date.now(),
+    })
+  }
+
+  /**
+   * Send device revocation notification
+   * This will be routed to the specific device to force logout
+   */
+  sendDeviceRevoked(targetDeviceId: string, reason?: string): void {
+    this.send({
+      type: 'device-revoked',
+      targetDeviceId,
+      reason,
       timestamp: Date.now(),
     })
   }
